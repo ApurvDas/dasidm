@@ -5,7 +5,8 @@
   import { bytes } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
   import VideoPicker from './VideoPicker.svelte';
-  import { isWebPage, type ProbeInfo, type VideoInfo, type VideoOption } from '../lib/types';
+  import TorrentPicker from './TorrentPicker.svelte';
+  import { isLocalPath, isTorrentLink, isWebPage, type ProbeInfo, type TorrentPreview, type VideoInfo, type VideoOption } from '../lib/types';
 
   let url = $state(typeof app.adding === 'string' ? app.adding : '');
   let name = $state('');
@@ -26,6 +27,13 @@
   let chosen = $state<VideoOption | null>(null);
   let playlist = $state(false);
   let installing = $state(false);
+
+  // Torrents (magnet links, .torrent links and files).
+  let tpreview = $state<TorrentPreview | null>(null);
+  let tloading = $state(false);
+  let terror = $state('');
+  let tchosen = $state<Set<number>>(new Set());
+  let ttrackers = $state('');
 
   /** Sites that are video or music pages almost always: read them with yt-dlp right away. */
   const VIDEO_HOSTS =
@@ -61,12 +69,15 @@
   });
 
   const magnet = $derived(/^magnet:\?/i.test(url.trim()));
-  const valid = $derived(/^https?:\/\/\S+$/i.test(url.trim()));
+  const localTorrent = $derived(isLocalPath(url) && /\.torrent$/i.test(url.trim()));
+  const valid = $derived(/^https?:\/\/\S+$/i.test(url.trim()) || magnet || localTorrent);
   // A link that answers with HTML is a page (e.g. a share link), not a file.
   const isPage = $derived(!!info && isWebPage(info.content_type));
   const toolsReady = $derived(!!app.tools?.ready);
+  /** A torrent: by its link, or because the server says the file is one. */
+  const torrentish = $derived(valid && (isTorrentLink(url) || /bittorrent/i.test(info?.content_type ?? '')));
   /** Worth asking yt-dlp: a known video site, or any link that turned out to be a page. */
-  const maybeVideo = $derived(valid && (videoHost(url.trim()) || isPage));
+  const maybeVideo = $derived(valid && !torrentish && (videoHost(url.trim()) || isPage));
 
   $effect(() => {
     const u = url.trim();
@@ -77,11 +88,14 @@
     chosen = null;
     playlist = false;
     resolving = false;
-    if (!/^https?:\/\/\S+$/i.test(u)) return;
+    tpreview = null;
+    terror = '';
+    tloading = false;
     const mine = ++token;
-    probing = !videoHost(u);
+    if (!/^https?:\/\/\S+$/i.test(u)) return;
+    probing = !videoHost(u) && !isTorrentLink(u);
     const t = setTimeout(async () => {
-      if (videoHost(u)) return; // a video site's page is never the file people want
+      if (videoHost(u) || isTorrentLink(u)) return; // read by yt-dlp / the torrent session instead
       try {
         const r = await api.probe(u);
         if (mine !== token) return;
@@ -115,6 +129,52 @@
       });
   });
 
+  // Read a torrent's file list (a magnet asks peers first).
+  $effect(() => {
+    if (!torrentish || tpreview || tloading || terror) return;
+    const u = url.trim();
+    const mine = token;
+    tloading = true;
+    api
+      .torrentPreview(u)
+      .then((p) => {
+        if (mine !== token) return;
+        tpreview = p;
+        tchosen = new Set(p.files.map((f) => f.index));
+      })
+      .catch((e) => {
+        if (mine === token) terror = String(e);
+      })
+      .finally(() => {
+        if (mine === token) tloading = false;
+      });
+  });
+
+  async function openTorrentFile() {
+    const path = await run(api.pickTorrentFile());
+    if (path) {
+      url = path;
+      fromClip = false;
+    }
+  }
+
+  async function submitTorrent(start: boolean) {
+    if (!tpreview || tchosen.size === 0) return;
+    const added = await run(
+      api.addTorrent({
+        infoHash: tpreview.infoHash,
+        onlyFiles: tchosen.size < tpreview.files.length ? [...tchosen] : null,
+        extraTrackers: ttrackers.split(/\s+/).filter(Boolean),
+        saveDir: folder.trim() || null,
+        start,
+      }),
+    );
+    if (added) {
+      close();
+      select(added.id);
+    }
+  }
+
   async function getTools() {
     installing = true;
     await run(api.installTools());
@@ -127,6 +187,7 @@
 
   async function submit(start: boolean, allowPage = false) {
     if (video) return submitVideo(start);
+    if (torrentish) return submitTorrent(start);
     if (!valid || ((isPage || videoHost(url.trim())) && !allowPage)) return;
     const added = await run(
       api.add({
@@ -203,7 +264,13 @@
   </div>
 
   <div class="probe" aria-live="polite">
-    {#if resolving}
+    {#if tloading}
+      <span class="cap">{magnet ? 'Asking peers for the file list… (this can take a minute)' : 'Reading the torrent…'}</span>
+    {:else if terror}
+      <span class="bad">{terror}</span>
+    {:else if tpreview}
+      <!-- the torrent picker below says it all -->
+    {:else if resolving}
       <span class="cap">Reading the video page…</span>
     {:else if video}
       <!-- the picker below says it all -->
@@ -235,8 +302,6 @@
         <span class="tag" class:no={!info.resumable}>{info.resumable ? 'Resumable · multi-line' : 'No resume · single line'}</span>
         {#if info.content_type}<span class="cap">{info.content_type.split(';')[0]}</span>{/if}
       </span>
-    {:else if magnet}
-      <span class="cap">Magnet links need torrent support, which comes in a later version.</span>
     {:else if url && !valid}
       <span class="cap">Links start with http:// or https://</span>
     {/if}
@@ -245,9 +310,12 @@
   {#if video}
     <VideoPicker info={video} bind:chosen bind:playlist />
   {/if}
+  {#if tpreview}
+    <TorrentPicker preview={tpreview} bind:chosen={tchosen} bind:trackers={ttrackers} />
+  {/if}
 
   <div class="grid">
-    {#if !video && !videoHost(url.trim())}
+    {#if !video && !videoHost(url.trim()) && !torrentish}
       <label>
         <span class="cap">Save as</span>
         <input class="field" bind:value={name} placeholder={info?.file_name ?? 'Name from the server'} spellcheck="false" />
@@ -271,8 +339,12 @@
   </div>
 
   <div class="foot">
+    <button class="btn ghost left" onclick={openTorrentFile} title="Open a .torrent file from this PC"><Icon name="type-torrents" />Open .torrent…</button>
     <button class="btn ghost" onclick={close}>Cancel<kbd>Esc</kbd></button>
-    {#if video}
+    {#if torrentish}
+      <button class="btn" disabled={!tpreview || tchosen.size === 0} onclick={() => submitTorrent(false)}>Add paused</button>
+      <button class="btn primary" disabled={!tpreview || tchosen.size === 0} onclick={() => submitTorrent(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
+    {:else if video}
       <button class="btn" disabled={!chosen} onclick={() => submitVideo(false)}>Add paused</button>
       <button class="btn primary" disabled={!chosen} onclick={() => submitVideo(true)}><Icon name="down" />Download{playlist && video.playlist ? ` ${video.playlist.count}` : ''}<kbd>Enter</kbd></button>
     {:else if maybeVideo && !toolsReady}
@@ -447,6 +519,9 @@
     justify-content: flex-end;
     gap: 6px;
     margin-top: 4px;
+  }
+  .foot .left {
+    margin-right: auto;
   }
   kbd {
     font-family: var(--mono);

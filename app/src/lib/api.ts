@@ -1,4 +1,4 @@
-import type { AddRequest, AddVideoRequest, CoreEvent, ItemView, ProbeInfo, Settings, ToolsStatus, VideoInfo } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, CoreEvent, ItemView, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, VideoInfo } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -41,6 +41,20 @@ export const api = {
   videoInfo: (url: string) => invokeImpl<VideoInfo>('video_info', { url }),
   addVideo: (req: AddVideoRequest) => invokeImpl<ItemView[]>('add_video', { req }),
   thumbnail: (id: string) => invokeImpl<string | null>('thumbnail', { id }),
+  // Torrents
+  torrentPreview: (source: string) =>
+    invokeImpl<TorrentPreview>('torrent_preview', /^[a-z]:\\/i.test(source) ? { link: null, path: source } : { link: source, path: null }),
+  addTorrent: (req: AddTorrentRequest) => invokeImpl<ItemView>('add_torrent', { req }),
+  trackers: (id: string) => invokeImpl<TrackerView[]>('torrent_trackers', { id }),
+  addTrackers: (id: string, urls: string[]) => invokeImpl<number>('add_trackers', { id, urls }),
+  removeTrackers: (id: string, urls: string[]) => invokeImpl<number>('remove_trackers', { id, urls }),
+  replaceTracker: (id: string, old: string, next: string) => invokeImpl<void>('replace_tracker', { id, old, new: next }),
+  reannounce: (id: string) => invokeImpl<void>('reannounce', { id }),
+  torrentFiles: (id: string) => invokeImpl<{ files: TorrentFile[]; chosen: number[] | null }>('torrent_files', { id }),
+  setTorrentFiles: (id: string, only: number[]) => invokeImpl<void>('set_torrent_files', { id, only }),
+  seed: (ids: string[]) => invokeImpl<void>('seed', { ids }),
+  pickTorrentFile: () => invokeImpl<string | null>('pick_torrent_file'),
+  registerTorrentHandler: () => invokeImpl<void>('register_torrent_handler'),
   /** A video link given on the command line, waiting for the Add sheet. */
   takePendingAdd: () => invokeImpl<string | null>('take_pending_add'),
   onOpenAdd: async (cb: (url: string) => void) => {

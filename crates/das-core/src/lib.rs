@@ -10,6 +10,7 @@ pub mod tools;
 pub mod video;
 
 pub use das_engine::ProbeInfo;
-pub use manager::{Emit, Manager};
+pub use das_torrent::{FileEntry, Preview as TorrentPreview, TrackerView};
+pub use manager::{Emit, Manager, is_torrent_link};
 pub use model::{AddRequest, CoreEvent, ItemView, Progress, Status, Totals};
 pub use settings::Settings;

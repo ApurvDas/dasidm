@@ -1,6 +1,6 @@
 // SYNTHETIC preview data: only loaded when the UI runs in a plain browser (no Tauri),
 // so the design can be reviewed without the Rust core. Never shipped as real content.
-import type { AddRequest, AddVideoRequest, CoreEvent, ItemView, Progress, Settings, ToolsStatus, VideoInfo } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, CoreEvent, ItemView, Progress, Settings, ToolsStatus, TorrentPreview, TrackerView, VideoInfo } from './types';
 
 /** ?boost=N speeds the simulation up so a review capture can catch a split. */
 const BOOST = Number(new URLSearchParams(location.search).get('boost')) || 1;
@@ -26,6 +26,7 @@ function item(p: Partial<ItemView> & Pick<ItemView, 'id' | 'fileName' | 'status'
   return {
     kind: 'http',
     media: null,
+    torrent: null,
     url: `https://cdn.example.net/${encodeURIComponent(p.fileName)}`,
     saveDir: `C:\\Users\\you\\Downloads\\${p.category}`,
     filePath: null,
@@ -114,6 +115,38 @@ items.push(
   }),
 );
 
+// Torrents: one loading from a swarm, one finished and seeding.
+const tv = (over: Partial<NonNullable<ItemView['torrent']>> = {}) => ({ infoHash: 'c0ffee'.padEnd(40, '0'), files: 6, chosenFiles: null, private: false, uploaded: 0, ratio: 0, seeding: false, ...over });
+items.push(
+  item({
+    id: 't1', fileName: 'Open Movie Collection (2026)', status: 'downloading', category: 'torrents', size: 7.4 * GB, downloaded: 3.1 * GB,
+    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:c0ffee', torrent: tv({ files: 6, chosenFiles: 5, uploaded: 410 * MB, ratio: 0.05 }),
+  }),
+  item({
+    id: 't2', fileName: 'field-recordings-48k.flac', status: 'done', category: 'torrents', size: 840 * MB, downloaded: 840 * MB,
+    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:beef', addedAt: now - 8 * 3600_000, finishedAt: now - 7 * 3600_000,
+    filePath: 'C:\\Users\\you\\Downloads\\Torrents\\field-recordings-48k.flac',
+    torrent: tv({ infoHash: 'beef'.padEnd(40, '0'), files: 1, uploaded: 512 * MB, ratio: 0.61, seeding: true }),
+  }),
+);
+const tsim = { t1: { pieces: Array.from({ length: 96 }, (_, i) => (i < 30 || (i > 50 && i < 58) || i % 7 === 0 ? 1 : i % 5 === 0 ? 0.5 : 0)), peers: 23, seeds: 9 } };
+let mockTrackers: TrackerView[] = [
+  { url: 'udp://tracker.example-one.org:6969/announce', tier: 0, state: 'working', seeders: 412, leechers: 61, peers: 50, lastAnnounce: now - 40_000, nextAnnounce: now + 1_760_000, message: null },
+  { url: 'https://tracker.example-two.net/announce', tier: 0, state: 'working', seeders: 388, leechers: 57, peers: 50, lastAnnounce: now - 41_000, nextAnnounce: now + 1_200_000, message: null },
+  { url: 'udp://open.example-three.io:1337/announce', tier: 1, state: 'notWorking', seeders: null, leechers: null, peers: 0, lastAnnounce: now - 30_000, nextAnnounce: now + 60_000, message: 'Timed out' },
+  { url: 'http://tracker.example-four.com:80/announce', tier: 1, state: 'updating', seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: null },
+  { url: 'wss://tracker.example-web.com', tier: 2, state: 'disabled', seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: 'wss:// trackers are not supported' },
+];
+const mockFiles = [
+  ['Open Movie Collection (2026)\\Sprite Fright (2160p).mkv', 2.9 * GB],
+  ['Open Movie Collection (2026)\\Charge (1080p).mkv', 1.2 * GB],
+  ['Open Movie Collection (2026)\\Wing It! (1080p).mkv', 1.1 * GB],
+  ['Open Movie Collection (2026)\\Coffee Run (1080p).mkv', 0.9 * GB],
+  ['Open Movie Collection (2026)\\Extras\\Making of.mp4', 1.3 * GB],
+  ['Open Movie Collection (2026)\\README.txt', 4 * 1024],
+].map(([path, size], index) => ({ index, path: path as string, size: size as number, done: index === 0 ? (size as number) : index < 3 ? (size as number) * 0.4 : 0 }));
+let mockChosen: number[] | null = [0, 1, 2, 3, 5];
+
 // ?empty previews the first run: no downloads at all.
 if (new URLSearchParams(location.search).has('empty')) {
   items.length = 0;
@@ -121,6 +154,13 @@ if (new URLSearchParams(location.search).has('empty')) {
 }
 
 let settings: Settings = {
+  torrentPort: 48213,
+  torrentUpnp: true,
+  torrentDht: true,
+  uploadLimit: 0,
+  seedRatio: 1,
+  seedMinutes: 0,
+  defaultTrackers: '',
   downloadDir: 'C:\\Users\\you\\Downloads',
   categoryFolders: true,
   maxConcurrent: 4,
@@ -231,6 +271,22 @@ setInterval(() => {
       fileName: it.fileName,
     });
   }
+  // Torrent swarm figures (synthetic).
+  for (const it of items.filter((i) => i.kind === 'torrent' && (i.status === 'downloading' || i.torrent?.seeding))) {
+    const live = it.status === 'downloading';
+    const sp = live ? 6.2 * MB * BOOST * (0.8 + Math.random() * 0.4) : 0;
+    if (live) it.downloaded = Math.min(it.size!, it.downloaded + sp / 4);
+    const sim = (tsim as any)[it.id] ?? { pieces: Array(96).fill(1), peers: 4, seeds: 0 };
+    if (live && Math.random() < 0.3) {
+      const k = sim.pieces.findIndex((x: number) => x < 1);
+      if (k >= 0) sim.pieces[k] = Math.min(1, sim.pieces[k] + 0.5);
+    }
+    progress.push({
+      id: it.id, downloaded: it.downloaded, size: it.size, speed: Math.round(sp), eta: live && sp ? Math.round((it.size! - it.downloaded) / sp) : null,
+      activeConnections: sim.peers, gaps: [], heads: [], parts: [], partsTotal: 0, fileName: it.fileName,
+      torrent: { upSpeed: Math.round((live ? 380 : 120) * 1024 * (0.7 + Math.random() * 0.6)), uploaded: it.torrent!.uploaded, peers: sim.peers, seeds: sim.seeds, knownPeers: 410, checking: false, seeding: !live, pieces: [...sim.pieces] },
+    });
+  }
   const speed = progress.reduce((a, p) => a + p.speed, 0);
   const rem = progress.reduce((a, p) => a + ((p.size ?? 0) - p.downloaded), 0);
   emit({
@@ -314,6 +370,62 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     }
     case 'thumbnail':
       return fakeThumb(String(args.id).length + String(args.id).charCodeAt(1)) as T;
+    case 'torrent_preview': {
+      await new Promise((r) => setTimeout(r, /^magnet/.test(args.link ?? '') ? 1400 : 500));
+      return {
+        infoHash: 'ab12'.padEnd(40, '0'), name: 'Open Movie Collection (2026)', size: mockFiles.reduce((a, f) => a + f.size, 0),
+        files: mockFiles.map((f) => ({ ...f, done: 0 })), trackers: mockTrackers.slice(0, 3).map((t) => t.url), private: false, pieceSize: 4 * MB, pieces: 1890,
+      } as TorrentPreview as T;
+    }
+    case 'add_torrent': {
+      const req = args.req as AddTorrentRequest;
+      const chosen = req.onlyFiles ?? mockFiles.map((f) => f.index);
+      const it = item({
+        id: `n${Date.now()}`, fileName: 'Open Movie Collection (2026)', status: req.start ? 'downloading' : 'paused', category: 'torrents',
+        size: mockFiles.filter((f) => chosen.includes(f.index)).reduce((a, f) => a + f.size, 0), addedAt: Date.now(), kind: 'torrent', connections: 0,
+        url: 'magnet:?xt=urn:btih:ab12', torrent: tv({ chosenFiles: req.onlyFiles?.length ?? null }),
+      });
+      items.push(it);
+      emit({ type: 'upsert', item: { ...it } });
+      return it as T;
+    }
+    case 'torrent_trackers':
+      return mockTrackers.map((t) => ({ ...t })) as T;
+    case 'add_trackers': {
+      const fresh = (args.urls as string[]).flatMap((u) => u.split(/\s+/)).filter((u) => /^(udp|https?):\/\//.test(u) && !mockTrackers.some((t) => t.url === u));
+      const tier = Math.max(...mockTrackers.map((t) => t.tier), -1) + 1;
+      mockTrackers = [...mockTrackers, ...fresh.map((url) => ({ url, tier, state: 'notContacted' as const, seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: null }))];
+      setTimeout(() => (mockTrackers = mockTrackers.map((t) => (fresh.includes(t.url) ? { ...t, state: 'working', seeders: 120, leechers: 14, peers: 30, lastAnnounce: Date.now(), nextAnnounce: Date.now() + 1_800_000 } : t))), 1500);
+      return fresh.length as T;
+    }
+    case 'remove_trackers':
+      mockTrackers = mockTrackers.filter((t) => !(args.urls as string[]).includes(t.url));
+      return undefined as T;
+    case 'replace_tracker':
+      mockTrackers = mockTrackers.map((t) => (t.url === args.old ? { ...t, url: args.new, state: 'notContacted', seeders: null, leechers: null, peers: 0, message: null } : t));
+      return undefined as T;
+    case 'reannounce':
+      mockTrackers = mockTrackers.map((t) => (t.state === 'disabled' ? t : { ...t, state: 'updating' }));
+      setTimeout(() => (mockTrackers = mockTrackers.map((t) => (t.state === 'updating' ? { ...t, state: t.url.includes('three') ? 'notWorking' : 'working', lastAnnounce: Date.now() } : t))), 1200);
+      return undefined as T;
+    case 'torrent_files':
+      return { files: mockFiles.map((f) => ({ ...f })), chosen: mockChosen } as T;
+    case 'set_torrent_files':
+      mockChosen = (args.only as number[]).length === mockFiles.length ? null : args.only;
+      return undefined as T;
+    case 'seed':
+      args.ids.forEach((id: string) => {
+        const it = find(id);
+        if (it?.torrent) {
+          it.torrent = { ...it.torrent, seeding: true };
+          emit({ type: 'upsert', item: { ...it } });
+        }
+      });
+      return undefined as T;
+    case 'pick_torrent_file':
+      return 'C:\\Users\\you\\Downloads\\open-movies.torrent' as T;
+    case 'register_torrent_handler':
+      return undefined as T;
     case 'pause':
       set(args.ids, 'paused');
       return undefined as T;

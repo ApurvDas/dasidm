@@ -21,6 +21,34 @@ pub enum Kind {
     Http,
     /// A video or music link, fetched by yt-dlp.
     Video,
+    /// A torrent or magnet link, fetched by the BitTorrent session.
+    Torrent,
+}
+
+/// What a torrent item remembers.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentSpec {
+    pub info_hash: String,
+    pub name: String,
+    pub files: usize,
+    #[serde(default)]
+    pub private: bool,
+    /// Indexes of the chosen files; None = all.
+    #[serde(default)]
+    pub only_files: Option<Vec<usize>>,
+    /// Where the data lives (the torrent's own folder for multi-file torrents).
+    pub output_dir: String,
+    #[serde(default)]
+    pub uploaded: u64,
+    /// Finished and still uploading to others.
+    #[serde(default)]
+    pub seeding: bool,
+    /// When seeding started (for the time limit).
+    #[serde(default)]
+    pub seed_since: Option<i64>,
+    #[serde(default)]
+    pub finished_once: bool,
 }
 
 /// A download as stored in the database.
@@ -57,6 +85,8 @@ pub struct Item {
     pub kind: Kind,
     #[serde(default)]
     pub video: Option<VideoSpec>,
+    #[serde(default)]
+    pub torrent: Option<TorrentSpec>,
 }
 
 /// What the UI sees for one row.
@@ -80,6 +110,20 @@ pub struct ItemView {
     pub kind: Kind,
     /// Video and music links: what was chosen and what it is.
     pub media: Option<MediaView>,
+    pub torrent: Option<TorrentView>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentView {
+    pub info_hash: String,
+    pub files: usize,
+    pub chosen_files: Option<usize>,
+    pub private: bool,
+    pub uploaded: u64,
+    /// Uploaded / size.
+    pub ratio: f32,
+    pub seeding: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -126,6 +170,18 @@ impl From<&Item> for ItemView {
                 site: v.site.clone(),
                 thumb: v.thumb.is_some(),
             }),
+            torrent: i.torrent.as_ref().map(|t| TorrentView {
+                info_hash: t.info_hash.clone(),
+                files: t.files,
+                chosen_files: t.only_files.as_ref().map(Vec::len),
+                private: t.private,
+                uploaded: t.uploaded,
+                ratio: match i.size {
+                    Some(s) if s > 0 => t.uploaded as f32 / s as f32,
+                    _ => 0.0,
+                },
+                seeding: t.seeding,
+            }),
         }
     }
 }
@@ -153,6 +209,23 @@ pub struct Progress {
     pub file_name: String,
     /// Video jobs: what yt-dlp is doing (downloading, merging, converting…).
     pub phase: Option<VideoPhase>,
+    /// Torrents: the swarm.
+    pub torrent: Option<TorrentLive>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentLive {
+    pub up_speed: u64,
+    pub uploaded: u64,
+    pub peers: u32,
+    pub seeds: u32,
+    pub known_peers: u32,
+    /// Checking pieces already on disk.
+    pub checking: bool,
+    pub seeding: bool,
+    /// Verified share of each stretch of the torrent (0..1), for the piece map.
+    pub pieces: Vec<f32>,
 }
 
 /// One byte range served by one connection.
@@ -195,6 +268,22 @@ pub struct AddRequest {
     /// Save the link even if it turns out to be a web page.
     #[serde(default)]
     pub allow_page: bool,
+}
+
+/// Add a torrent that was previewed (by its info hash) with the chosen files.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddTorrentRequest {
+    pub info_hash: String,
+    #[serde(default)]
+    pub only_files: Option<Vec<usize>>,
+    /// Extra trackers, one per entry (the default list from Settings is added too).
+    #[serde(default)]
+    pub extra_trackers: Vec<String>,
+    #[serde(default)]
+    pub save_dir: Option<String>,
+    #[serde(default = "yes")]
+    pub start: bool,
 }
 
 /// Add a video or music link with a choice from the quality picker.

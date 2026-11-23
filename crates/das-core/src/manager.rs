@@ -15,6 +15,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+#[path = "torrent_jobs.rs"]
+mod torrent_jobs;
+pub use torrent_jobs::is_torrent_link;
+
 pub type Emit = Arc<dyn Fn(CoreEvent) + Send + Sync>;
 
 #[derive(Clone)]
@@ -35,6 +39,10 @@ struct Inner {
     history: Mutex<std::collections::VecDeque<u64>>,
     tools: Arc<Tools>,
     data_dir: PathBuf,
+    /// The BitTorrent session (started only when a torrent needs it).
+    torrents: Arc<das_torrent::Torrents>,
+    /// Torrents read but not added yet, by info hash.
+    previews: Mutex<HashMap<String, Arc<das_torrent::Preview>>>,
 }
 
 const HISTORY: usize = 240;
@@ -73,7 +81,12 @@ struct Running {
 impl Manager {
     pub fn open(data_dir: &Path, emit: Emit) -> Result<Self, String> {
         let db = Db::open(&data_dir.join("dasidm.db")).map_err(|e| e.to_string())?;
-        let settings = db.load_settings();
+        let mut settings = db.load_settings();
+        // A fixed port keeps seeding reachable (UPnP maps it once); pick one the first time.
+        if settings.torrent_port == 0 {
+            settings.torrent_port = fastrand::u16(20000..60000);
+            let _ = db.save_settings(&settings);
+        }
         let mut state = State::default();
         for mut item in db.load_items().map_err(|e| e.to_string())? {
             // A crash or exit mid-download: pick it up again.
@@ -86,6 +99,7 @@ impl Manager {
         let engine = Engine::new(EngineConfig::default());
         engine.global_limiter().set_rate(settings.speed_limit);
         let tools = Tools::new(emit.clone());
+        let torrents = Arc::new(das_torrent::Torrents::new(&data_dir.join("torrents"), torrent_jobs::torrent_settings(&settings)));
         Ok(Self {
             inner: Arc::new(Inner {
                 engine,
@@ -98,6 +112,8 @@ impl Manager {
                 history: Mutex::new(std::collections::VecDeque::with_capacity(HISTORY)),
                 tools,
                 data_dir: data_dir.to_path_buf(),
+                torrents,
+                previews: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -106,6 +122,7 @@ impl Manager {
     /// Must run on a tokio runtime; it also starts queued downloads.
     pub async fn run(self) {
         self.inner.schedule();
+        self.inner.start_torrents_if_needed();
         let mut tick = tokio::time::interval(Duration::from_millis(250));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut n: u64 = 0;
@@ -141,6 +158,7 @@ impl Manager {
 
     pub fn set_settings(&self, s: Settings) -> Result<(), String> {
         self.inner.engine.global_limiter().set_rate(s.speed_limit);
+        self.inner.torrents.update_settings(torrent_jobs::torrent_settings(&s));
         self.inner.db.lock().save_settings(&s).map_err(|e| e.to_string())?;
         *self.inner.settings.write() = s;
         self.inner.schedule();
@@ -197,6 +215,7 @@ impl Manager {
                 allow_html: req.allow_page,
                 kind: Kind::Http,
                 video: None,
+                torrent: None,
             };
             let _ = self.inner.db.lock().save_item(&item);
             let view = ItemView::from(&item);
@@ -300,6 +319,7 @@ impl Manager {
                     allow_html: false,
                     kind: Kind::Video,
                     video: Some(spec),
+                    torrent: None,
                 };
                 let _ = self.inner.db.lock().save_item(&item);
                 let view = ItemView::from(&item);
@@ -335,7 +355,11 @@ impl Manager {
                 if let Some(r) = st.running.get(id) {
                     r.job.pause(); // becomes Paused when the job stops
                 } else if let Some(item) = st.items.get_mut(id) {
-                    if item.status == Status::Queued {
+                    if item.kind == Kind::Torrent {
+                        if self.inner.pause_torrent(item) {
+                            changed.push(item.clone());
+                        }
+                    } else if item.status == Status::Queued {
                         item.status = Status::Paused;
                         changed.push(item.clone());
                     }
@@ -351,6 +375,12 @@ impl Manager {
             let mut st = self.inner.state.lock();
             for id in ids {
                 if let Some(item) = st.items.get_mut(id) {
+                    if item.kind == Kind::Torrent {
+                        if self.inner.resume_torrent(item) {
+                            changed.push(item.clone());
+                        }
+                        continue;
+                    }
                     if matches!(item.status, Status::Paused | Status::Failed) {
                         item.status = Status::Queued;
                         item.error = None;
@@ -386,6 +416,9 @@ impl Manager {
                     continue;
                 }
                 if let Some(item) = st.items.get_mut(id) {
+                    if item.kind == Kind::Torrent {
+                        continue; // a torrent re-checks its own pieces; nothing to start over
+                    }
                     if let Some(r) = item.resume.take() {
                         let _ = std::fs::remove_file(part_path(&r.file_path));
                     }
@@ -416,6 +449,11 @@ impl Manager {
             for id in ids {
                 let running = st.running.remove(id);
                 let Some(item) = st.items.remove(id) else { continue };
+                if item.kind == Kind::Torrent {
+                    self.inner.remove_torrent(&item, delete_files);
+                    removed.push(id.clone());
+                    continue;
+                }
                 let part = item.resume.as_ref().map(|r| part_path(&r.file_path));
                 let finished = (item.status == Status::Done).then(|| item.file_path.clone()).flatten();
                 let work = item.video.as_ref().map(|_| video_work_dir(&item.save_dir, &item.id));
@@ -470,6 +508,7 @@ impl Manager {
     /// Save everything (call before the app exits).
     pub async fn shutdown(&self) {
         self.inner.checkpoint().await;
+        self.inner.torrents.shutdown().await;
     }
 }
 
@@ -714,9 +753,10 @@ impl Inner {
     fn progress_tick(&self) -> bool {
         let visible = self.visible.load(Ordering::Relaxed);
         let mut renamed = Vec::new();
+        let (mut tchanged, mut tcompleted) = (Vec::new(), Vec::new());
         let (items, totals) = {
             let mut st = self.state.lock();
-            if st.running.is_empty() {
+            if st.running.is_empty() && !Inner::has_active_torrents(&st) {
                 // Send one final all-zero update so the board doesn't keep showing the last speed.
                 if self.was_running.swap(false, Ordering::Relaxed) {
                     let queued = st.items.values().filter(|i| i.status == Status::Queued).count();
@@ -763,6 +803,7 @@ impl Inner {
                             parts_total: 0,
                             file_name: item.file_name.clone(),
                             phase: Some(vs.phase),
+                            torrent: None,
                         });
                         continue;
                     }
@@ -830,8 +871,10 @@ impl Inner {
                     parts_total,
                     file_name: item.file_name.clone(),
                     phase: None,
+                    torrent: None,
                 });
             }
+            self.torrent_progress(items, visible, &mut out, &mut totals, &mut tchanged, &mut tcompleted);
             for item in items.values().filter(|i| i.status == Status::Queued) {
                 totals.queued += 1;
                 totals.remaining_bytes += item.size.map(|s| s.saturating_sub(item.downloaded)).unwrap_or(0);
@@ -842,6 +885,10 @@ impl Inner {
             (out, totals)
         };
         self.push_history(totals.speed);
+        self.persist_and_emit(&tchanged);
+        for c in tcompleted {
+            (self.emit)(CoreEvent::Completed { item: ItemView::from(&c) });
+        }
         for v in renamed {
             (self.emit)(CoreEvent::Upsert { item: v });
         }

@@ -2,6 +2,8 @@
 name = "das-torrent"
 version = "0.1.0"
 edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/ApurvDas/dasidm"
 description = "DasIDM torrents: a lazy librqbit session with editable trackers"
 
 [dependencies]

@@ -1,54 +1,42 @@
 # DasIDM
 
-A personal download manager for Windows, written from scratch in Rust (engine + core), Tauri 2 (shell) and Svelte 5 (UI).
+A fast download manager for Windows, written from scratch in Rust (engine and core), Tauri 2 (shell) and Svelte 5 (UI). Files over many parallel connections, video and music from websites, torrents with editable trackers, and a Firefox add-on that hands your downloads to it. It idles in the tray at a few megabytes of RAM.
 
-## What works (phase 1)
+![The DasIDM window: a departures board of active downloads, the list with each download's pieces filling, and the selected download's pass](docs/screenshots/main.png)
 
-- **Multi-connection engine** (`crates/das-engine`): 1 to 32 parallel connections per file with dynamic work stealing (an idle connection takes half of the biggest remaining range, so every line stays busy until the last byte). Data is written straight to its final offset in `name.ext.dasdl` (sparse on NTFS) and renamed when done.
-- **Pause / resume / crash-safe:** resume points are checkpointed every 2 s (fsync first, then the database), and validated against the server's ETag / Last-Modified on resume.
-- Retries with exponential backoff; drops to fewer connections when a server refuses extra ones; servers without range support fall back to one connection.
-- **Speed limit** (global, live), **queue** with "N at once", **categories** by file type with optional per-type folders.
-- **UI:** "Gate Board" design on Windows 11 Mica glass: a departures board of active downloads ranked by finish time, a virtualised list of everything, and a boarding-pass detail with a live map of every connection.
-- **Low idle RAM:** closing the window destroys the WebView entirely; downloads continue in the tray with only the Rust core in memory.
+## Download
 
-- **Parts view:** every download's pass shows a live map of its parts; **Open parts** (`P`) shows each connection as its own row with byte range, progress and speed. When a fast line takes over half of a slow line's part, the cut flashes yellow and the new row reads "SPLIT FROM #NN" (animated with anime.js; off under reduced motion).
+- **DasIDM for Windows 10/11:** the installer is on the [Releases page](https://github.com/ApurvDas/dasidm/releases/latest) (`DasIDM_<version>_x64-setup.exe`). It installs for your Windows user only, so it needs no admin rights. The installer isn't code-signed yet, so Windows SmartScreen may say "Windows protected your PC": click **More info → Run anyway**. Each release lists the installer's SHA-256 so you can check it.
+- **Firefox add-on, "DasIDM – Download Manager":** on addons.mozilla.org (the link follows once Mozilla has reviewed it). It needs DasIDM installed.
 
-## What works (v0.1.1)
+## What it does
 
-- **Video and music links** (YouTube and the other sites yt-dlp reads): Add URL shows a **quality picker** instead of saving the web page. Video: every resolution the site has, as "MP4 · H.264 · plays everywhere" or "best quality" (VP9/AV1, WebM/MKV), with sizes. Sound only: M4A (original, not re-encoded), MP3 320, Opus (original), FLAC (labelled honestly: the source is lossy). Playlists: "This video" or "Whole playlist". Pause, resume, retry on YouTube's occasional 403, and remove all work; titles, artist and (for music) cover art are embedded.
-- **Video tools on demand:** the first video link asks once to fetch yt-dlp, ffmpeg and deno (about 158 MB; about 320 MB unpacked) from the publishers' GitHub releases into `%LOCALAPPDATA%\DasIDM\tools`. Every file is checked against the publisher's SHA-256 list before it is used; yt-dlp is refreshed weekly. Each job works in its own hidden `.dasidm` folder and the finished file is moved next to yours under a free name, so a video job never overwrites a file.
-- **Never saves a web page by accident:** a link that answers with HTML shows "This link is a web page, not a file" with a deliberate **Save page anyway**.
-- **Add URL picks up the clipboard:** `Add URL` / `Ctrl+N` open prefilled with the first link on the clipboard ("From clipboard").
-- **Browse…** opens the Windows folder picker for the Add sheet's folder and Settings' download folder.
-- **File types told apart:** an icon per type (video, music, program, archive, disc image, document, image, torrent, web page, other), a sortable Type column, type chips with counts above the list, and for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`), channel and real thumbnail on the pass. Types come from the extension, or the server's Content-Type when the name has none.
+**Files.** 1 to 32 connections per file with work stealing: an idle connection takes half of the biggest remaining range, so every line stays busy until the last byte. Pause, resume and crash safety: progress is saved every 2 seconds and checked against the server's ETag and Last-Modified when you resume. Retries with backoff, a global live speed limit, a queue with "N at once", and file types sorted into folders. A link that turns out to be a web page asks before saving it.
 
-## What works (v0.2.0): torrents
+**Video and music** from YouTube and the other sites yt-dlp reads. A quality picker shows every resolution as "MP4 · H.264 · plays everywhere" or best quality (VP9/AV1), and sound-only as M4A, MP3 320, Opus or FLAC. Playlists, titles, artists and cover art are embedded. The tools (yt-dlp, FFmpeg, Deno) are downloaded once, only after you agree, from their publishers' GitHub releases, and each file is checked against the publisher's SHA-256 list before use.
 
-- **Magnet links, .torrent links and .torrent files** (Add URL, `Ctrl+V`, **Open .torrent…**, drag a file onto the window, or `dasidm.exe <magnet or file>`). DasIDM reads the file list first; choose which files to fetch and add extra trackers. Many-file torrents get their own folder.
-- **qBittorrent-style editable trackers** while a torrent runs: each tracker's status (Working, Not working with the reason, Updating, Not contacted, Disabled), tier, seeds, peers, peers received and next announce; add, edit, remove, **Ask all now**, copy all. Edits survive restarts. This needed a small patch to librqbit (see `third_party/NOTICE.md`).
-- **Files** can be included or skipped while the torrent runs; a **piece map** shows what is verified.
-- **Seeding** after the download, until a ratio or time limit (Settings); **Stop seeding** / **Seed** on finished torrents. Upload limit, a default tracker list for every new torrent, a fixed incoming port with UPnP, DHT on or off, and "Use DasIDM for magnets and .torrent files" (this Windows user only).
-- **Low idle RAM still holds:** the BitTorrent session starts only while a torrent is downloading or seeding.
+**Torrents.** Magnet links, .torrent links and files. See the folders and files before adding, pick what to fetch, and watch each file fill while it loads. qBittorrent-style trackers you can edit while it runs: each tracker's status, seeds, peers and next announce; add, edit, remove, Ask all now. A piece map; seeding to a ratio or time limit; upload limit, port, UPnP and DHT settings.
 
-## What works (v0.3.0): Firefox, the pieces bar, actions on every download
+**Firefox.** With the add-on, files you download in Firefox open in DasIDM's Add sheet, with the site's cookie and referrer so files behind a login work. Press Enter to start. Alt+click a link to keep that one in Firefox; right-click a link for "Download with DasIDM". If DasIDM can't take a download, Firefox simply keeps it.
 
-- **Firefox extension** (`extension/firefox`): files you download in Firefox open in DasIDM's Add sheet instead (with the site's cookie and referrer, so logged-in downloads work); press Enter to start. Alt+click a link to leave that one to Firefox; right-click a link for **Download with DasIDM**. The toolbar popup shows whether DasIDM is connected and switches capture off, private windows on, or a minimum size. If DasIDM can't take a download, Firefox keeps it.
-  - `DasIDM.exe` is its own native messaging helper: Firefox starts it with the host manifest, it relays to the running DasIDM over a per-user named pipe (no network port), and starts DasIDM in the tray if needed. DasIDM registers this itself on every start (`%LOCALAPPDATA%\DasIDM\browser`, `HKCU\Software\Mozilla\NativeMessagingHosts\dev.dasidm.host`) and unpacks the extension there; Settings → Firefox shows the state, opens that folder and repairs it.
-  - Try it: Firefox → `about:debugging` → This Firefox → Load Temporary Add-on… → `manifest.json` in that folder (until Firefox restarts). To keep it, sign it as a private (unlisted) add-on: get an API key at https://addons.mozilla.org/developers/addon/api/key/ and run `powershell -ExecutionPolicy Bypass -File extension\sign.ps1` yourself (it asks for the key and never saves it), then Install Add-on From File… with the signed `.xpi` from `extension\dist`. `npm run lint --prefix extension` runs Mozilla's checker.
-- **The pieces bar** in the list and on the board: one cell per part a connection is fetching, each filling on its own, with the percentage beside it. Torrents show their pieces.
-- **Actions on every download:** right-click a row (or its ⋯ button, or `Shift+F10`): open, pause, resume or retry, start over, **Start / Stop seeding** for finished torrents, show in folder, copy link, **Remove from list** (files stay) or **Delete from list and PC** (asks first; skips the Recycle Bin).
+**The window.** A "Gate Board" design on Windows 11 Mica glass:
+- a departures board of active downloads ranked by finish time;
+- a list where each download's bar is cut into its pieces, each filling on its own, with the percentage beside it;
+- a boarding-pass view of the selected download with a live map of every connection.
 
-Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause/resume · `Enter` open · `P` parts view · `Del` remove · `Shift+Del` delete from PC · `Shift+F10` actions · `Ctrl+F` search · `↑ ↓` move.
+Right-click any download to open, pause, resume, start or stop seeding, show in folder, copy its link, remove it from the list, or delete it from the PC (which asks first). Closing the window unloads it completely; downloads continue in the tray.
 
-Add from the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`. A video link given this way opens the quality picker.
+Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause or resume · `Enter` open · `P` parts or torrent view · `Del` remove · `Shift+Del` delete from PC · `Shift+F10` actions · `Ctrl+F` search · `↑ ↓` move.
 
-## Coming next (agreed phases)
+From the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`, or `dasidm.exe --background` to start in the tray.
 
-Chrome and Edge extension, video buttons on pages, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
+## Privacy
 
-## Build and run
+No account, no telemetry, no ads. The add-on talks only to DasIDM on the same PC. See [PRIVACY.md](PRIVACY.md).
 
-Requirements: Rust (MSVC), Node 20+, WebView2 (built into Windows 11).
+## Build from source
+
+Requirements: Rust (MSVC toolchain), Node 20+, WebView2 (built into Windows 11).
 
 ```powershell
 cd app
@@ -58,30 +46,39 @@ npx tauri build               # installer in target/release/bundle/nsis
 npx tauri build --no-bundle   # just target/release/dasidm.exe
 ```
 
-`npm run dev` alone serves the UI in a normal browser with synthetic preview data (no Rust needed) for design work.
+`npm run dev` alone serves the UI in a normal browser with sample data (no Rust needed), for design work.
 
 Tests:
 
 ```powershell
-cargo test -p das-engine -p das-core -p dasidm
-node --test extension/firefox
+cargo test --workspace
+npm test --prefix extension    # the add-on's capture rules
+npm run lint --prefix extension  # Mozilla's add-on checker
 ```
 
-## Git workflow
+### The Firefox add-on
 
-- `main` is always releasable; each release is a tag (`v0.1.0`, …). Remote: private GitHub repo `ApurvDas/dasidm`.
-- New work goes on a branch named for the feature (`feature/media-and-add-flow`), one commit per milestone with tests passing, then a pull request into `main`.
-- Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
-- Plans for upcoming phases live in `docs/plans/` (e.g. `docs/plans/torrents.md`).
+`extension/firefox` is plain JavaScript with no build step. `DasIDM.exe` is its own native messaging host: Firefox starts it, and it relays each message over a named pipe that only your Windows account can reach (no network port) to the running DasIDM, starting it in the tray if needed. DasIDM registers this on every start (`%LOCALAPPDATA%\DasIDM\browser` and `HKCU\Software\Mozilla\NativeMessagingHosts\dev.dasidm.host`) and unpacks the add-on there. Settings → Firefox shows the state, opens that folder and repairs it.
+
+To try a development copy: Firefox → `about:debugging` → This Firefox → Load Temporary Add-on… → `manifest.json` in that folder. `extension\sign.ps1` signs it with your own addons.mozilla.org API key (it asks in the terminal and never saves the key).
 
 ## Layout
 
 ```
-crates/das-engine   download engine (no UI, no DB)
-crates/das-core     manager: SQLite, queue, categories, settings, progress events
-app/src-tauri       Tauri shell: commands, tray, Mica window, low-RAM lifecycle
+crates/das-engine   download engine (no UI, no database)
+crates/das-core     manager: SQLite, queue, categories, settings, video, torrents
+crates/das-torrent  BitTorrent session on librqbit (patched copy in third_party/)
+app/src-tauri       Tauri shell: commands, tray, Mica window, Firefox helper
 app/src             Svelte UI
-extension/firefox   Firefox extension (plain JS, no build step)
+extension/firefox   Firefox add-on
 ```
 
-Data lives in `%APPDATA%\dev.dasidm.app\dasidm.db`. Start minimised to the tray with `dasidm.exe --background`.
+Your downloads list and settings live in `%APPDATA%\dev.dasidm.app`.
+
+## Contributing
+
+Issues and pull requests are welcome. Work goes on a branch, one commit per step with tests passing, and commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`…).
+
+## Licence
+
+Apache License 2.0; see [LICENSE](LICENSE) and [NOTICE](NOTICE). DasIDM was written from scratch, inspired by the feature set of [Prism Download Manager](https://github.com/FortoGraphy/prism-download-manager). It is not affiliated with Internet Download Manager or Tonec Inc.

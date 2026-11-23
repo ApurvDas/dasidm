@@ -1,6 +1,6 @@
 [package]
 name = "dasidm"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "DasIDM download manager"
 
@@ -10,6 +10,7 @@ tauri-build = { version = "2.7.6", features = [] }
 [dependencies]
 arboard = { version = "3.7.0", default-features = false }
 das-core = { version = "0.1.0", path = "../../crates/das-core" }
+parking_lot = "0.13.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tauri = { version = "2.12.7", features = ["tray-icon"] }

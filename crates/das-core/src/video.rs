@@ -102,6 +102,18 @@ pub struct Entry {
     pub thumbnail: Option<String>,
 }
 
+/// Sites whose links are video or music pages almost always (kept in step with the Add sheet).
+pub fn is_video_site(link: &str) -> bool {
+    const HOSTS: [&str; 18] = [
+        "youtube.com", "youtu.be", "youtube-nocookie.com", "vimeo.com", "soundcloud.com", "bandcamp.com", "dailymotion.com",
+        "twitch.tv", "tiktok.com", "instagram.com", "x.com", "twitter.com", "reddit.com", "facebook.com", "bilibili.com",
+        "rumble.com", "odysee.com", "mixcloud.com",
+    ];
+    url::Url::parse(link).ok().and_then(|u| u.host_str().map(str::to_ascii_lowercase)).is_some_and(|h| {
+        HOSTS.iter().any(|d| h == *d || h.ends_with(&format!(".{d}")))
+    })
+}
+
 // ---------------------------------------------------------------------------------------
 // Reading a link
 
@@ -151,7 +163,7 @@ pub async fn resolve(tools: &Tools, url: &str) -> Result<VideoInfo, String> {
             channel: s(&info, "channel").or_else(|| s(&info, "uploader")),
             duration: None,
             thumbnail: pick_thumbnail(&info),
-            site: s(&info, "extractor_key").unwrap_or_default(),
+            site: site_name(&s(&info, "extractor_key").unwrap_or_default()),
             is_live: false,
             options: generic_options(),
             playlist: Some(PlaylistInfo { title: s(&info, "title").unwrap_or_default(), count }),
@@ -197,11 +209,24 @@ pub fn info_from_json(info: &Value) -> VideoInfo {
         channel: s("channel").or_else(|| s("uploader")),
         duration,
         thumbnail: pick_thumbnail(info),
-        site: s("extractor_key").unwrap_or_default(),
+        site: site_name(&s("extractor_key").unwrap_or_default()),
         is_live: info.get("is_live").and_then(Value::as_bool).unwrap_or(false),
         options: options_from(info, duration),
         playlist: None,
         playlist_only: false,
+    }
+}
+
+/// Site names as people write them (yt-dlp's extractor keys are "Youtube", "Soundcloud"…).
+fn site_name(key: &str) -> String {
+    match key.to_ascii_lowercase().as_str() {
+        k if k.starts_with("youtube") => "YouTube".into(),
+        "soundcloud" => "SoundCloud".into(),
+        "tiktok" => "TikTok".into(),
+        "twitter" => "X".into(),
+        "bandcamp" => "Bandcamp".into(),
+        "dailymotion" => "Dailymotion".into(),
+        _ => key.to_string(),
     }
 }
 
@@ -564,6 +589,14 @@ pub struct VideoSpec {
     /// Temporary files yt-dlp left behind (deleted on remove or restart).
     #[serde(default)]
     pub partials: Vec<String>,
+    /// Automatic retries used since the last success or manual resume.
+    #[serde(default)]
+    pub retries: u32,
+}
+
+/// Errors that a fresh attempt usually gets past (expired links, a refused fragment, a dropped connection).
+pub fn is_transient(friendly: &str) -> bool {
+    friendly.contains("(403)") || friendly.starts_with("Network problem")
 }
 
 /// The yt-dlp command line for one download.
@@ -978,6 +1011,7 @@ mod tests {
     fn groups_formats_into_choices() {
         let v = info_from_json(&fixture());
         assert_eq!(v.title, "Test clip");
+        assert_eq!(v.site, "YouTube");
         assert_eq!(v.duration, Some(600));
         assert_eq!(v.thumbnail.as_deref(), Some("https://i.ytimg.com/vi/x/mqdefault.jpg"));
         let labels: Vec<String> = v.options.iter().map(|o| format!("{} {}", o.label, o.ext)).collect();
@@ -1063,6 +1097,29 @@ mod tests {
         st.apply(parse_line("DASQ|Merger|started"));
         assert_eq!(st.phase, VideoPhase::Merging);
         assert_eq!(st.partials, ["v.part", "a.part"]);
+    }
+
+    #[test]
+    fn choice_json_matches_the_ui() {
+        let v: Choice = serde_json::from_str(r#"{"kind":"video","height":1080,"compat":true}"#).unwrap();
+        assert_eq!(v, Choice::Video { height: 1080, compat: true });
+        let a: Choice = serde_json::from_str(r#"{"kind":"audio","format":"mp3"}"#).unwrap();
+        assert_eq!(a, Choice::Audio { format: AudioFormat::Mp3 });
+        let o: VideoOption = serde_json::from_str(
+            r#"{"choice":{"kind":"audio","format":"flac"},"label":"FLAC","detail":"x","ext":"flac","size":null,"approx":true,"selector":"ba/b","note":"n","recommended":false}"#,
+        )
+        .unwrap();
+        assert_eq!(o.ext, "flac");
+        assert_eq!(serde_json::to_value(VideoPhase::Merging).unwrap(), "merging");
+    }
+
+    #[test]
+    fn knows_video_sites() {
+        assert!(is_video_site("https://youtu.be/abc?si=1"));
+        assert!(is_video_site("https://m.youtube.com/watch?v=x"));
+        assert!(is_video_site("https://music.youtube.com/watch?v=x"));
+        assert!(!is_video_site("https://notyoutube.com/x"));
+        assert!(!is_video_site("https://cdn.example.net/file.zip"));
     }
 
     #[test]

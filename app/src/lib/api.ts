@@ -41,6 +41,13 @@ export const api = {
   videoInfo: (url: string) => invokeImpl<VideoInfo>('video_info', { url }),
   addVideo: (req: AddVideoRequest) => invokeImpl<ItemView[]>('add_video', { req }),
   thumbnail: (id: string) => invokeImpl<string | null>('thumbnail', { id }),
+  /** A video link given on the command line, waiting for the Add sheet. */
+  takePendingAdd: () => invokeImpl<string | null>('take_pending_add'),
+  onOpenAdd: async (cb: (url: string) => void) => {
+    if (!inTauri) return;
+    const event = await import('@tauri-apps/api/event');
+    await event.listen<string>('open-add', (e) => cb(e.payload));
+  },
   clipboardLink: () => invokeImpl<string | null>('clipboard_link'),
   pickFolder: (start?: string | null) => invokeImpl<string | null>('pick_folder', { start: start || null }),
   listen: (cb: (e: CoreEvent) => void) => listenImpl(cb),

@@ -370,7 +370,16 @@ Squared-off, dense and keyboard-labelled: the key that triggers an action is sho
 The top panel: a Display title with a fog caption beside it, the 60-second speed trace (ivory 1.5px line over a 7% ivory area), and the Numeral XL figures. Rows are ranked by finish time on a 2-second clock with hysteresis (a row overtakes only when clearly sooner, by 15 seconds or 20%), rerank with a 520ms quartic ease-out move, and freeze while the pointer is over the board. A real overtake lights the row (10% yellow ground, Lit Ring) and swaps the status for a "MOVED UP" yellow badge. Each row carries a 3px live strip along its bottom: ivory where bytes are on disk, holes where they are missing, yellow ticks at each write head.
 
 ### Hall List
-The quieter full list: search, category select and count, sortable condensed-mono column headers, then virtualised 34px rows of mark, name, size, status (with a 72px mini strip while loading or paused) and added time. Finished and failed rows hold a yellow Lit Ring until seen.
+The quieter full list: search and the type chips, sortable condensed-mono column headers, then virtualised 34px rows of mark, name, type, size, status (with a 72px mini strip while loading or paused) and added time. Finished and failed rows hold a yellow Lit Ring until seen. The Type cell is a fog type icon plus the type's word, or for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`); below 720px it keeps only the icon.
+
+### Type Chips and Type Icons
+Types are told apart by shape and word, never by colour (Yellow Means Change). Each type has one stroke icon on the 16px grid at 1.5px (video frame with play, note, terminal window, box, disc, page, picture, magnet, globe, blank page). Chips follow the filter-tab pattern: 28px, fog text, the icon, the word and a condensed-mono count; the chosen chip takes the 9% ivory ground. Only types present are shown. When the words don't all fit, every chip except the chosen one drops its word and keeps icon and count (measured, not breakpointed).
+
+### Quality Picker
+Inside the Add Sheet for video and music links: the title (2 lines) with channel · length · site in fog, a Video / Sound only segmented control and, for playlist links, This video / Whole playlist N. Below, a radio list of 34px rows: a condensed-mono quality numeral, the detail in fog ("MP4 · H.264 · 60 fps · plays everywhere"), a "Suggested" outline tag on the recommended row, and the size right-aligned (≈ when estimated). The chosen row uses the selection ground and line, not yellow. A note under the list tells the truth where it matters (FLAC from a lossy source). The first video link instead shows a plain offer to fetch the video tools, with a thin ivory progress track per tool while they download.
+
+### Media Art
+The one place imagery appears: a video's real thumbnail, stored small and shown at the top of the pass (16:9, at most 168px tall, cover). The pass's type line adds the quality, extension and length, and the channel sits under it in steel.
 
 ### The Pass (signature)
 The selected item as an ivory boarding pass on the glass: header band with the file name and a sequence number, the route line (source code → folder in Route Code), a two-cell and a three-cell segment of label-over-value data separated by dashed tear lines, then the parts map printed as the scannable block (barcode stripes where loaded, Paper Hole where missing, Burnt Yellow heads) with an ink "Open parts" button. A failure prints a Failure Slip at the foot. Actions sit below the pass on the glass.
@@ -382,7 +391,7 @@ A departures board for one file: header figures, a 64px file map (ivory loaded, 
 A 10px square with 2px corners in a fixed cell, labelled for assistive tech; the same mark appears in hall rows and filter tabs.
 
 ### Add Sheet
-A 560px opaque sheet (12px corners, Sheet ground, Strong Hairline border, Sheet Drop) dropped from under the title bar's right edge over a scrim, focus-trapped. It probes the link as you type and shows size and resumability before you commit.
+A 560px opaque sheet (12px corners, Sheet ground, Strong Hairline border, Sheet Drop) dropped from under the title bar's right edge over a scrim, focus-trapped. It opens prefilled with a clipboard link (a "From clipboard" outline pill in the field), probes the link as you type and shows size and resumability before you commit. A web page is named as one ("This link is a web page, not a file") with a deliberate Save page anyway; video sites go straight to the Quality Picker. Folder fields carry a Browse… button that opens the Windows folder picker.
 
 ### Motion
 One grammar, implemented in anime.js for the live parts motion:

@@ -6,7 +6,7 @@ use crate::model::*;
 use crate::settings::Settings;
 use crate::tools::{Tools, ToolsStatus};
 use crate::video::{self, VideoError, VideoInfo, VideoJob, VideoSpec};
-use das_engine::filename::{file_name_from_url, part_path, sanitize_file_name};
+use das_engine::filename::{file_name_from_url, part_path, sanitize_file_name, unique_path};
 use das_engine::{DownloadHandle, DownloadRequest, Engine, EngineConfig, EngineError, ProbeInfo};
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
@@ -272,6 +272,7 @@ impl Manager {
                 site: req.site.clone(),
                 thumb: None,
                 partials: vec![],
+                retries: 0,
             };
             let view = {
                 let mut st = self.inner.state.lock();
@@ -353,6 +354,9 @@ impl Manager {
                     if matches!(item.status, Status::Paused | Status::Failed) {
                         item.status = Status::Queued;
                         item.error = None;
+                        if let Some(v) = item.video.as_mut() {
+                            v.retries = 0;
+                        }
                         changed.push(item.clone());
                     }
                 }
@@ -386,9 +390,9 @@ impl Manager {
                         let _ = std::fs::remove_file(part_path(&r.file_path));
                     }
                     if let Some(v) = item.video.as_mut() {
-                        for p in v.partials.drain(..) {
-                            let _ = std::fs::remove_file(p);
-                        }
+                        v.partials.clear();
+                        v.retries = 0;
+                        let _ = std::fs::remove_dir_all(video_work_dir(&item.save_dir, &item.id));
                     }
                     item.downloaded = 0;
                     item.size = None;
@@ -414,7 +418,8 @@ impl Manager {
                 let Some(item) = st.items.remove(id) else { continue };
                 let part = item.resume.as_ref().map(|r| part_path(&r.file_path));
                 let finished = (item.status == Status::Done).then(|| item.file_path.clone()).flatten();
-                let partials = item.video.as_ref().map(|v| v.partials.clone()).unwrap_or_default();
+                let work = item.video.as_ref().map(|_| video_work_dir(&item.save_dir, &item.id));
+                let jobs_dir = Path::new(&item.save_dir).join(WORK_DIR);
                 match running.map(|r| r.job) {
                     Some(Job::Http(h)) => {
                         h.cancel();
@@ -429,17 +434,19 @@ impl Manager {
                         v.cancel();
                         tokio::spawn(async move {
                             let _ = v.wait().await;
-                            for p in v.state().partials.iter().chain(partials.iter()) {
-                                let _ = tokio::fs::remove_file(p).await;
+                            if let Some(w) = work {
+                                let _ = tokio::fs::remove_dir_all(w).await;
                             }
+                            remove_if_empty(&jobs_dir);
                         });
                     }
                     None => {
                         if let Some(p) = part {
                             let _ = std::fs::remove_file(p);
                         }
-                        for p in partials {
-                            let _ = std::fs::remove_file(p);
+                        if let Some(w) = work {
+                            let _ = std::fs::remove_dir_all(w);
+                            remove_if_empty(&jobs_dir);
                         }
                     }
                 }
@@ -506,8 +513,12 @@ impl Inner {
                         started.push(item.clone());
                         continue;
                     }
-                    let _ = std::fs::create_dir_all(&item.save_dir);
-                    let args = video::download_args(&self.tools, &spec, &item.url, Path::new(&item.save_dir));
+                    // yt-dlp works in a folder of its own: it skips (and with -x even deletes) any
+                    // file that already has the name it wants, so it never sees the user's files.
+                    let work = video_work_dir(&item.save_dir, &item.id);
+                    let _ = std::fs::create_dir_all(&work);
+                    hide(&Path::new(&item.save_dir).join(WORK_DIR));
+                    let args = video::download_args(&self.tools, &spec, &item.url, &work);
                     let job = VideoJob::start(self.tools.yt_dlp(), args);
                     item.status = Status::Downloading;
                     item.error = None;
@@ -609,7 +620,18 @@ impl Inner {
             let vs = job.state();
             let mut completed = false;
             match result {
-                Ok(path) => {
+                Ok(made) => {
+                    // Move the finished file next to the user's files, never over one.
+                    let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| item.file_name.clone());
+                    let dest = unique_path(Path::new(&item.save_dir), &name);
+                    let path = match std::fs::rename(&made, &dest) {
+                        Ok(()) => dest,
+                        Err(_) => made, // another drive or locked: leave it where yt-dlp made it
+                    };
+                    if path.parent() != Some(video_work_dir(&item.save_dir, &item.id).as_path()) {
+                        let _ = std::fs::remove_dir_all(video_work_dir(&item.save_dir, &item.id));
+                        remove_if_empty(&Path::new(&item.save_dir).join(WORK_DIR));
+                    }
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(vs.known_total());
                     item.status = Status::Done;
                     item.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -620,11 +642,14 @@ impl Inner {
                     item.error = None;
                     if let Some(v) = item.video.as_mut() {
                         v.partials.clear();
+                        v.retries = 0;
                     }
                     completed = true;
                 }
                 Err(e) => {
-                    item.downloaded = vs.downloaded();
+                    if !vs.streams.is_empty() {
+                        item.downloaded = vs.downloaded();
+                    }
                     if let Some(v) = item.video.as_mut() {
                         for p in vs.partials {
                             if !v.partials.contains(&p) {
@@ -635,8 +660,18 @@ impl Inner {
                     match e {
                         VideoError::Paused | VideoError::Cancelled => item.status = Status::Paused,
                         VideoError::Failed(msg) => {
-                            item.status = Status::Failed;
-                            item.error = Some(msg);
+                            // Try again by itself a couple of times; finished streams are kept.
+                            let v = item.video.as_mut();
+                            match v {
+                                Some(v) if video::is_transient(&msg) && v.retries < 2 => {
+                                    v.retries += 1;
+                                    item.status = Status::Queued;
+                                }
+                                _ => {
+                                    item.status = Status::Failed;
+                                    item.error = Some(msg);
+                                }
+                            }
                         }
                     }
                 }
@@ -702,7 +737,10 @@ impl Inner {
                     Job::Video(v) => {
                         let vs = v.state();
                         let Some(item) = items.get_mut(id) else { continue };
-                        item.downloaded = vs.downloaded();
+                        // A resumed job reads the page again first; keep the old figure until it reports.
+                        if !vs.streams.is_empty() {
+                            item.downloaded = vs.downloaded();
+                        }
                         let total = item.size.unwrap_or(0).max(vs.known_total());
                         if total > 0 {
                             item.size = Some(total);
@@ -852,6 +890,30 @@ impl Inner {
         };
         let _ = self.db.lock().save_items(items.iter());
     }
+}
+
+/// Where unfinished video jobs keep their pieces: `<save dir>\.dasidm\<id>`.
+const WORK_DIR: &str = ".dasidm";
+
+fn video_work_dir(save_dir: &str, id: &str) -> PathBuf {
+    Path::new(save_dir).join(WORK_DIR).join(id)
+}
+
+/// Mark a folder hidden in Explorer.
+fn hide(dir: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW};
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let attrs = GetFileAttributesW(wide.as_ptr());
+        if attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_HIDDEN == 0 {
+            SetFileAttributesW(wide.as_ptr(), attrs | FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+}
+
+fn remove_if_empty(dir: &Path) {
+    let _ = std::fs::remove_dir(dir); // fails (and does nothing) unless empty
 }
 
 /// Missing ranges and live connection heads, as fractions of the file.

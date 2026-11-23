@@ -11,6 +11,8 @@ use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, Theme, WebviewUrl
 
 struct App {
     core: Manager,
+    /// A video link from the command line, waiting for the window to show its quality picker.
+    pending_add: parking_lot::Mutex<Option<String>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -137,6 +139,12 @@ fn thumbnail(app: State<'_, App>, id: String) -> Option<String> {
     app.core.thumbnail(&id)
 }
 
+/// A link handed over on the command line that needs the Add sheet (video sites).
+#[tauri::command]
+fn take_pending_add(app: State<'_, App>) -> Option<String> {
+    app.pending_add.lock().take()
+}
+
 /// The first link on the clipboard, so Add URL can open prefilled.
 #[tauri::command]
 fn clipboard_link() -> Option<String> {
@@ -189,7 +197,14 @@ fn show_main(app: &AppHandle) {
 
 /// Links passed on the command line (`dasidm.exe <url>…`) are added as downloads.
 fn add_urls(app: &AppHandle, args: &[String]) {
-    let urls: Vec<String> = args.iter().filter(|a| a.starts_with("http://") || a.starts_with("https://")).cloned().collect();
+    let mut urls: Vec<String> = args.iter().filter(|a| a.starts_with("http://") || a.starts_with("https://")).cloned().collect();
+    // A video page needs a quality choice: open the Add sheet with it instead of saving the page.
+    if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u)) {
+        let link = urls.remove(i);
+        *app.state::<App>().pending_add.lock() = Some(link.clone());
+        show_main(app);
+        let _ = app.emit("open-add", link);
+    }
     if urls.is_empty() {
         return;
     }
@@ -244,6 +259,7 @@ fn main() {
             open_folder,
             clipboard_link,
             pick_folder,
+            take_pending_add,
             tools_status,
             install_tools,
             update_tools,
@@ -269,7 +285,7 @@ fn main() {
                 tauri::async_runtime::block_on(async move { c.set_settings(s) })?;
             }
             tauri::async_runtime::spawn(core.clone().run());
-            app.manage(App { core });
+            app.manage(App { core, pending_add: parking_lot::Mutex::new(None) });
             add_urls(&handle, &args);
 
             let open = MenuItem::with_id(app, "open", "Open DasIDM", true, None::<&str>)?;

@@ -1,6 +1,6 @@
 // SYNTHETIC preview data: only loaded when the UI runs in a plain browser (no Tauri),
 // so the design can be reviewed without the Rust core. Never shipped as real content.
-import type { AddRequest, CoreEvent, ItemView, Progress, Settings } from './types';
+import type { AddRequest, AddVideoRequest, CoreEvent, ItemView, Progress, Settings, ToolsStatus, VideoInfo } from './types';
 
 /** ?boost=N speeds the simulation up so a review capture can catch a split. */
 const BOOST = Number(new URLSearchParams(location.search).get('boost')) || 1;
@@ -24,6 +24,8 @@ interface Sim {
 
 function item(p: Partial<ItemView> & Pick<ItemView, 'id' | 'fileName' | 'status' | 'category'>): ItemView {
   return {
+    kind: 'http',
+    media: null,
     url: `https://cdn.example.net/${encodeURIComponent(p.fileName)}`,
     saveDir: `C:\\Users\\you\\Downloads\\${p.category}`,
     filePath: null,
@@ -96,6 +98,22 @@ done.forEach(([name, cat, size, hoursAgo], i) =>
   ),
 );
 
+// A finished video and a song from a video site, so media rows and the pass can be reviewed.
+items.push(
+  item({
+    id: 'v1', fileName: 'Building a tiny synth from scratch.mp4', status: 'done', category: 'video', size: 486 * MB, downloaded: 486 * MB,
+    kind: 'video', url: 'https://video.example.net/watch?v=demo1', addedAt: now - 5 * 3600_000, finishedAt: now - 5 * 3600_000 + 90_000,
+    filePath: 'C:\\Users\\you\\Downloads\\Video\\Building a tiny synth from scratch.mp4',
+    media: { title: 'Building a tiny synth from scratch', quality: '1080p', format: 'MP4', audioOnly: false, duration: 1268, channel: 'Bench Notes', site: 'Example', thumb: true },
+  }),
+  item({
+    id: 'v2', fileName: 'Harbour Lights - Low Tide (live).mp3', status: 'done', category: 'music', size: 9.4 * MB, downloaded: 9.4 * MB,
+    kind: 'video', url: 'https://video.example.net/watch?v=demo2', addedAt: now - 6 * 3600_000, finishedAt: now - 6 * 3600_000 + 30_000,
+    filePath: 'C:\\Users\\you\\Downloads\\Music\\Harbour Lights - Low Tide (live).mp3',
+    media: { title: 'Harbour Lights - Low Tide (live)', quality: 'MP3', format: 'MP3', audioOnly: true, duration: 238, channel: 'Harbour Lights', site: 'Example', thumb: true },
+  }),
+);
+
 // ?empty previews the first run: no downloads at all.
 if (new URLSearchParams(location.search).has('empty')) {
   items.length = 0;
@@ -112,6 +130,52 @@ let settings: Settings = {
   notifyOnComplete: true,
   startWithWindows: false,
 };
+
+// ?notools previews the first video link, before yt-dlp and ffmpeg are installed.
+let tools: ToolsStatus = {
+  ready: !new URLSearchParams(location.search).has('notools'),
+  ytDlp: '2026.10.26', ffmpeg: true, deno: true, installSize: 158_000_000, installing: null, error: null,
+};
+
+/** A synthetic thumbnail: a flat colour field, so no real media art is shipped in the preview. */
+function fakeThumb(seed: number) {
+  const hue = (seed * 67) % 360;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="hsl(${hue} 30% 28%)"/><circle cx="230" cy="70" r="46" fill="hsl(${hue} 40% 42%)"/><rect y="120" width="320" height="60" fill="hsl(${hue} 25% 18%)"/></svg>`;
+  return `data:image/svg+xml;base64,${btoa(svg)}`;
+}
+
+function fakeVideo(url: string): VideoInfo {
+  const audioOnly = /music/.test(url);
+  const d = audioOnly ? 238 : 1268;
+  const v = (height: number, compat: boolean, detail: string, size: number, rec = false) => ({
+    choice: { kind: 'video' as const, height, compat }, label: `${height}p`, detail, ext: compat ? 'mp4' : height > 1080 ? 'mkv' : 'webm',
+    size, approx: false, selector: 'x', note: null, recommended: rec,
+  });
+  const a = (format: 'm4a' | 'mp3' | 'opus' | 'flac', label: string, detail: string, size: number, note: string | null = null, rec = false) => ({
+    choice: { kind: 'audio' as const, format }, label, detail, ext: format, size, approx: format === 'mp3' || format === 'flac', selector: 'x', note, recommended: rec,
+  });
+  return {
+    url, title: audioOnly ? 'Harbour Lights - Low Tide (live)' : 'Building a tiny synth from scratch', channel: audioOnly ? 'Harbour Lights' : 'Bench Notes',
+    duration: d, thumbnail: null, site: 'Example', isLive: false,
+    options: [
+      ...(audioOnly ? [] : [
+        v(2160, false, 'MKV · AV1 · 60 fps · 4K · best quality', 2.9 * GB),
+        v(1440, false, 'WebM · VP9 · 60 fps · best quality', 1.2 * GB),
+        v(1080, false, 'WebM · VP9 · 60 fps · best quality', 612 * MB),
+        v(1080, true, 'MP4 · H.264 · 60 fps · plays everywhere', 486 * MB, true),
+        v(720, true, 'MP4 · H.264 · plays everywhere', 212 * MB),
+        v(480, true, 'MP4 · H.264 · plays everywhere', 96 * MB),
+        v(360, true, 'MP4 · H.264 · plays everywhere', 58 * MB),
+      ]),
+      a('m4a', 'M4A', 'AAC 130 kbps · original, not re-encoded', (d * 130_000) / 8, null, audioOnly),
+      a('mp3', 'MP3', '320 kbps · converted, plays everywhere', d * 40_000),
+      a('opus', 'Opus', 'Opus 135 kbps · original, not re-encoded', (d * 135_000) / 8),
+      a('flac', 'FLAC', 'Lossless container', d * 110_000, 'The site only has lossy audio, so FLAC is a bigger file but does not sound better.'),
+    ],
+    playlist: /list=/.test(url) ? { title: 'Synth builds', count: 12 } : null,
+    playlistOnly: false,
+  };
+}
 
 function emit(e: CoreEvent) {
   listeners.forEach((l) => l(e));
@@ -217,6 +281,39 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
       return (new URLSearchParams(location.search).get('clip') || null) as T;
     case 'pick_folder':
       return 'D:\\Media\\Downloads' as T;
+    case 'tools_status':
+      return { ...tools } as T;
+    case 'install_tools': {
+      // Simulated: three steps filling up over ~3 s (no real download in the preview).
+      const sizes = [24, 91, 43].map((m) => m * MB);
+      for (let i = 0; i < 3; i++) {
+        for (let f = 0; f <= 10; f++) {
+          tools = { ...tools, installing: { step: ['yt-dlp', 'ffmpeg', 'deno'][i], index: i, count: 3, downloaded: (sizes[i] * f) / 10, size: sizes[i] } };
+          emit({ type: 'tools', status: { ...tools } });
+          await new Promise((r) => setTimeout(r, 100));
+        }
+      }
+      tools = { ...tools, ready: true, installing: null };
+      emit({ type: 'tools', status: { ...tools } });
+      return undefined as T;
+    }
+    case 'video_info':
+      await new Promise((r) => setTimeout(r, 900));
+      return fakeVideo(args.url) as T;
+    case 'add_video': {
+      const req = args.req as AddVideoRequest;
+      const audio = req.option.choice.kind === 'audio';
+      const it = item({
+        id: `n${Date.now()}`, fileName: `${req.title}.${req.option.ext}`, status: 'downloading', category: audio ? 'music' : 'video',
+        size: req.option.size ?? 200 * MB, addedAt: Date.now(), url: req.url, kind: 'video', connections: 1,
+        media: { title: req.title, quality: req.option.label, format: req.option.ext.toUpperCase(), audioOnly: audio, duration: req.duration ?? null, channel: req.channel ?? null, site: req.site ?? null, thumb: true },
+      });
+      items.push(it);
+      emit({ type: 'upsert', item: { ...it } });
+      return [it] as T;
+    }
+    case 'thumbnail':
+      return fakeThumb(String(args.id).length + String(args.id).charCodeAt(1)) as T;
     case 'pause':
       set(args.ids, 'paused');
       return undefined as T;

@@ -1,4 +1,4 @@
-import type { AddRequest, CoreEvent, ItemView, ProbeInfo, Settings } from './types';
+import type { AddRequest, AddVideoRequest, CoreEvent, ItemView, ProbeInfo, Settings, ToolsStatus, VideoInfo } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -35,6 +35,12 @@ export const api = {
   setSettings: (settings: Settings) => invokeImpl<void>('set_settings', { settings }),
   openFile: (id: string) => invokeImpl<void>('open_file', { id }),
   openFolder: (id: string) => invokeImpl<void>('open_folder', { id }),
+  toolsStatus: () => invokeImpl<ToolsStatus>('tools_status'),
+  installTools: () => invokeImpl<void>('install_tools'),
+  updateTools: () => invokeImpl<boolean>('update_tools'),
+  videoInfo: (url: string) => invokeImpl<VideoInfo>('video_info', { url }),
+  addVideo: (req: AddVideoRequest) => invokeImpl<ItemView[]>('add_video', { req }),
+  thumbnail: (id: string) => invokeImpl<string | null>('thumbnail', { id }),
   clipboardLink: () => invokeImpl<string | null>('clipboard_link'),
   pickFolder: (start?: string | null) => invokeImpl<string | null>('pick_folder', { start: start || null }),
   listen: (cb: (e: CoreEvent) => void) => listenImpl(cb),

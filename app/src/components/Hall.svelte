@@ -5,6 +5,7 @@
   import SegStrip from '../lib/SegStrip.svelte';
   import Icon from '../lib/Icon.svelte';
   import { CATEGORIES, category, typeIcon, type ItemView } from '../lib/types';
+  import { PHASE, isPostPhase, mediaLine } from '../lib/media';
 
   const ROW = 34;
   let viewport = $state<HTMLDivElement>();
@@ -69,6 +70,7 @@
     switch (i.status) {
       case 'downloading': {
         const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size);
+        if (p?.phase && isPostPhase(p.phase)) return `${PHASE[p.phase]}…`;
         return `${pc ?? '··'}% · ${speed(p?.speed)}`;
       }
       case 'queued':
@@ -172,7 +174,7 @@
             <Mark status={i.status} />
             <span class="text" title={i.fileName}>{i.fileName}</span>
           </span>
-          <span class="type" title={category(i.category).name}><Icon name={typeIcon(i.category)} size={14} /><span class="tl">{category(i.category).short}</span></span>
+          <span class="type" title={category(i.category).name}><Icon name={typeIcon(i.category)} size={14} /><span class="tl">{mediaLine(i) ?? category(i.category).short}</span></span>
           <span class="r">{bytes(p?.size ?? i.size)}</span>
           <span class="st">
             {#if i.status === 'downloading' || i.status === 'paused'}

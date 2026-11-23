@@ -106,6 +106,37 @@ fn open_folder(app: State<'_, App>, id: String) -> Res<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn tools_status(app: State<'_, App>) -> das_core::tools::ToolsStatus {
+    app.core.tools_status()
+}
+
+/// Download yt-dlp, ffmpeg and deno. The UI calls this only after the user agrees.
+#[tauri::command]
+async fn install_tools(app: State<'_, App>) -> Res<()> {
+    app.core.install_tools().await
+}
+
+#[tauri::command]
+async fn update_tools(app: State<'_, App>) -> Res<bool> {
+    app.core.update_tools().await
+}
+
+#[tauri::command]
+async fn video_info(app: State<'_, App>, url: String) -> Res<das_core::video::VideoInfo> {
+    app.core.video_info(url).await
+}
+
+#[tauri::command]
+async fn add_video(app: State<'_, App>, req: das_core::model::AddVideoRequest) -> Res<Vec<ItemView>> {
+    app.core.add_video(req).await
+}
+
+#[tauri::command]
+fn thumbnail(app: State<'_, App>, id: String) -> Option<String> {
+    app.core.thumbnail(&id)
+}
+
 /// The first link on the clipboard, so Add URL can open prefilled.
 #[tauri::command]
 fn clipboard_link() -> Option<String> {
@@ -212,7 +243,13 @@ fn main() {
             open_file,
             open_folder,
             clipboard_link,
-            pick_folder
+            pick_folder,
+            tools_status,
+            install_tools,
+            update_tools,
+            video_info,
+            add_video,
+            thumbnail
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

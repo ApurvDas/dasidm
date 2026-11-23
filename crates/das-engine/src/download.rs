@@ -771,6 +771,28 @@ pub(crate) async fn probe(cfg: &EngineConfig, req: &DownloadRequest) -> Result<P
     })
 }
 
+pub(crate) async fn fetch_small(cfg: &EngineConfig, url: &str, limit: usize) -> Result<(Vec<u8>, Option<String>), EngineError> {
+    let client = make_client(cfg)?;
+    let mut resp = client
+        .get(url)
+        .timeout(cfg.read_timeout.max(Duration::from_secs(20)))
+        .send()
+        .await
+        .map_err(|e| EngineError::Network(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(EngineError::Http(resp.status().as_u16()));
+    }
+    let content_type = header_str(resp.headers(), header::CONTENT_TYPE);
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| EngineError::Network(e.to_string()))? {
+        if body.len() + chunk.len() > limit {
+            return Err(EngineError::Network(format!("response larger than {limit} bytes")));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok((body, content_type))
+}
+
 fn make_client(cfg: &EngineConfig) -> Result<Client, EngineError> {
     Client::builder()
         .user_agent(cfg.user_agent.clone())

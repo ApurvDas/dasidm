@@ -170,4 +170,10 @@ impl Engine {
     pub async fn probe(&self, req: &DownloadRequest) -> Result<ProbeInfo, EngineError> {
         download::probe(&self.config, req).await
     }
+
+    /// Fetch a small file (a thumbnail, a checksum list) into memory, refusing anything over `limit` bytes.
+    /// Returns the body and its Content-Type.
+    pub async fn fetch_small(&self, url: &str, limit: usize) -> Result<(Vec<u8>, Option<String>), EngineError> {
+        download::fetch_small(&self.config, url, limit).await
+    }
 }

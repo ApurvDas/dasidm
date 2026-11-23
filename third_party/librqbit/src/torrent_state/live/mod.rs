@@ -723,6 +723,16 @@ impl TorrentStateLive {
             .map(|c| *c.get_hns())
     }
 
+    /// rqbit-patch: how much of each stretch of the torrent is verified on disk, as `buckets`
+    /// fractions (0.0 to 1.0) in piece order, for drawing a piece map.
+    pub fn piece_map(&self, buckets: usize) -> Option<Vec<f32>> {
+        let g = self.lock_read("piece_map");
+        let chunks = g.get_chunks().ok()?;
+        let total = chunks.get_lengths().total_pieces() as usize;
+        let have = chunks.get_have_pieces().as_slice();
+        piece_buckets(&have[..total.min(have.len())], buckets)
+    }
+
     fn transmit_haves(&self, index: ValidPieceIndex) {
         let _ = self.have_broadcast_tx.send(index);
     }
@@ -2104,4 +2114,36 @@ fn format_peer_client_name(value: &ByteBuf<'_>) -> Option<String> {
     }
 
     Some(client_name)
+}
+
+/// rqbit-patch: fold a have-bitfield into `buckets` fractions.
+fn piece_buckets(have: &bitvec::slice::BitSlice<u8, bitvec::order::Msb0>, buckets: usize) -> Option<Vec<f32>> {
+    let total = have.len();
+    if total == 0 || buckets == 0 {
+        return None;
+    }
+    let n = buckets.min(total);
+    Some(
+        (0..n)
+            .map(|b| {
+                let (from, to) = (b * total / n, ((b + 1) * total / n).max(b * total / n + 1));
+                have[from..to].count_ones() as f32 / (to - from) as f32
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod piece_map_tests {
+    use bitvec::prelude::*;
+
+    #[test]
+    fn folds_pieces_into_buckets() {
+        let mut bits = bitvec![u8, Msb0; 0; 10];
+        bits[0..5].fill(true);
+        assert_eq!(super::piece_buckets(&bits, 2).unwrap(), vec![1.0, 0.0]);
+        assert_eq!(super::piece_buckets(&bits, 100).unwrap().len(), 10);
+        assert_eq!(super::piece_buckets(&bits, 5).unwrap(), vec![1.0, 1.0, 0.5, 0.0, 0.0]);
+        assert!(super::piece_buckets(&bits[..0], 4).is_none());
+    }
 }

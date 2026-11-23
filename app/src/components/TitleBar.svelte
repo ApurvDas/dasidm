@@ -70,7 +70,7 @@
     {:else if counts.paused > 0}
       <button class="btn ghost" onclick={() => run(api.resumeAll())} aria-label="Resume all"><Icon name="play" /><span class="label">Resume all</span></button>
     {/if}
-    <button class="btn ghost" class:on={app.panel === 'settings'} onclick={() => (app.panel = app.panel === 'settings' ? 'pass' : 'settings')} aria-label="Settings"><Icon name="gear" /></button>
+    <button class="btn ghost" class:on={app.panel === 'settings'} onclick={() => (app.panel = app.panel === 'settings' ? 'pass' : 'settings')} aria-pressed={app.panel === 'settings'}><Icon name="gear" />Settings</button>
     <button class="btn primary" onclick={() => (app.adding = true)}><Icon name="plus" />Add URL</button>
   </div>
 

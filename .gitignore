@@ -4,3 +4,4 @@ app/dist/
 app/src-tauri/gen/
 .impeccable/questions/
 .impeccable/reference/
+extension/dist/

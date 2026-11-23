@@ -2,7 +2,7 @@
   import { app, matchesFilter, select, type SortKey } from '../lib/state.svelte';
   import { bytes, percent, speed, when } from '../lib/format';
   import Mark from '../lib/Mark.svelte';
-  import SegStrip from '../lib/SegStrip.svelte';
+  import PiecesBar from '../lib/PiecesBar.svelte';
   import Icon from '../lib/Icon.svelte';
   import { CATEGORIES, category, typeIcon, type ItemView } from '../lib/types';
   import { PHASE, isPostPhase, mediaLine } from '../lib/media';
@@ -71,18 +71,17 @@
       case 'downloading': {
         const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size);
         if (p?.phase && isPostPhase(p.phase)) return `${PHASE[p.phase]}…`;
+        // The percentage sits beside the pieces bar; the text carries the rest.
         if (i.kind === 'torrent') {
-          if (p?.torrent?.checking) return `Checking pieces · ${pc ?? 0}%`;
-          return `${pc ?? '··'}% · ${speed(p?.speed)} · ${p?.torrent?.peers ?? 0} peers`;
+          if (p?.torrent?.checking) return 'Checking pieces';
+          return `${speed(p?.speed)} · ${p?.torrent?.peers ?? 0} peers`;
         }
-        return `${pc ?? '··'}% · ${speed(p?.speed)}`;
+        return pc == null ? `${bytes(p?.downloaded ?? i.downloaded)} · ${speed(p?.speed)}` : speed(p?.speed);
       }
       case 'queued':
         return 'Waiting';
-      case 'paused': {
-        const pc = percent(i.downloaded, i.size);
-        return pc == null ? 'Paused' : `Paused at ${pc}%`;
-      }
+      case 'paused':
+        return 'Paused';
       case 'failed':
         return i.error ?? 'Failed';
       case 'done':
@@ -171,7 +170,13 @@
           role="option"
           aria-selected={app.selected === i.id}
           tabindex="-1"
+          data-row={i.id}
           onclick={() => select(i.id)}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            select(i.id);
+            app.menu = { id: i.id, x: e.clientX, y: e.clientY };
+          }}
           ondblclick={() => i.status === 'done' && window.dispatchEvent(new CustomEvent('das:open', { detail: i.id }))}
           onkeydown={() => {}}
         >
@@ -183,11 +188,33 @@
           <span class="r">{bytes(p?.size ?? i.size)}</span>
           <span class="st">
             {#if i.status === 'downloading' || i.status === 'paused'}
-              <span class="mini"><SegStrip gaps={p?.gaps?.length ? p.gaps : null} heads={p?.heads ?? []} fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)} tone={i.status === 'paused' ? 'steel' : 'ivory'} /></span>
+              {@const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size)}
+              <span class="mini"
+                ><PiecesBar
+                  p={i.status === 'downloading' ? p : undefined}
+                  fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)}
+                  tone={i.status === 'paused' ? 'steel' : 'ivory'}
+                  height={10}
+                  cells={20}
+                /></span
+              >
+              <span class="pcv" class:paused={i.status === 'paused'}>{pc ?? '··'}%</span>
             {/if}
             <span class="stext">{statusText(i)}</span>
           </span>
           <span class="added">{when(i.addedAt)}</span>
+          <button
+            class="more"
+            aria-label="Actions for {i.fileName}"
+            title="Actions"
+            onclick={(e) => {
+              e.stopPropagation();
+              select(i.id);
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              app.menu = { id: i.id, x: r.right - 232, y: r.bottom + 4 };
+            }}
+            ondblclick={(e) => e.stopPropagation()}><Icon name="dots" size={14} /></button
+          >
         </div>
       {/each}
     </div>
@@ -406,9 +433,22 @@
     gap: 10px;
     min-width: 0;
   }
+  /* The pieces bar gives way before the percentage beside it does. */
   .mini {
-    width: 72px;
+    flex: 0 1 150px;
+    min-width: 48px;
+  }
+  .pcv {
     flex: none;
+    min-width: 4ch;
+    text-align: right;
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .pcv.paused {
+    color: var(--fog);
   }
   .stext {
     overflow: hidden;
@@ -424,6 +464,31 @@
   .added {
     color: var(--fog);
     white-space: nowrap;
+  }
+  /* The row's ⋯ menu button: shown on the hovered and the selected row, over the Added cell. */
+  .more {
+    position: absolute;
+    right: 8px;
+    top: 4px;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    color: var(--fog);
+    background: rgb(26 31 37 / 0.92);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tr:hover .more,
+  .tr.sel .more,
+  .more:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .more:hover {
+    color: var(--ivory);
+    background: #2a3038;
   }
   .none {
     position: absolute;

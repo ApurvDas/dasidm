@@ -19,6 +19,10 @@
   let token = 0;
   /** The link came from the clipboard (Add URL / Ctrl+N), not from typing or pasting. */
   let fromClip = $state(false);
+  /** Handed over by Firefox: its headers go with the link while it is unchanged. */
+  const handed = app.addFrom;
+  const from = $derived(handed && handed.url === url.trim() ? handed : null);
+  if (handed?.fileName) name = handed.fileName;
 
   // Video and music links.
   let video = $state<VideoInfo | null>(null);
@@ -97,7 +101,7 @@
     const t = setTimeout(async () => {
       if (videoHost(u) || isTorrentLink(u)) return; // read by yt-dlp / the torrent session instead
       try {
-        const r = await api.probe(u);
+        const r = await api.probe(u, from?.headers);
         if (mine !== token) return;
         info = r;
         if (!name) name = r.file_name;
@@ -183,6 +187,7 @@
 
   function close() {
     app.adding = false;
+    app.addFrom = null;
   }
 
   async function submit(start: boolean, allowPage = false) {
@@ -195,6 +200,7 @@
         fileName: name.trim() || null,
         saveDir: folder.trim() || null,
         connections: lines,
+        headers: from?.headers ?? [],
         start,
         allowPage,
       }),
@@ -260,7 +266,7 @@
   <div class="urlrow">
     <Icon name="link" />
     <input id="add-url" bind:this={input} class="field" bind:value={url} oninput={() => (fromClip = false)} placeholder="https://…" spellcheck="false" autocomplete="off" />
-    {#if fromClip}<span class="clip">From clipboard</span>{/if}
+    {#if fromClip}<span class="clip">From clipboard</span>{:else if from?.from}<span class="clip">From {from.from}</span>{/if}
   </div>
 
   <div class="probe" aria-live="polite">

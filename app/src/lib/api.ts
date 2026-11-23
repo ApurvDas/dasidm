@@ -1,4 +1,4 @@
-import type { AddRequest, AddTorrentRequest, AddVideoRequest, CoreEvent, ItemView, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, VideoInfo } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, VideoInfo } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -23,7 +23,7 @@ if (inTauri) {
 export const api = {
   list: () => invokeImpl<ItemView[]>('list_downloads'),
   history: () => invokeImpl<number[]>('speed_history'),
-  probe: (url: string) => invokeImpl<ProbeInfo>('probe_url', { url }),
+  probe: (url: string, headers?: [string, string][] | null) => invokeImpl<ProbeInfo>('probe_url', { url, headers: headers?.length ? headers : null }),
   add: (req: AddRequest) => invokeImpl<ItemView>('add_download', { req }),
   pause: (ids: string[]) => invokeImpl<void>('pause', { ids }),
   resume: (ids: string[]) => invokeImpl<void>('resume', { ids }),
@@ -55,13 +55,17 @@ export const api = {
   seed: (ids: string[]) => invokeImpl<void>('seed', { ids }),
   pickTorrentFile: () => invokeImpl<string | null>('pick_torrent_file'),
   registerTorrentHandler: () => invokeImpl<void>('register_torrent_handler'),
-  /** A video link given on the command line, waiting for the Add sheet. */
-  takePendingAdd: () => invokeImpl<string | null>('take_pending_add'),
-  onOpenAdd: async (cb: (url: string) => void) => {
+  /** A link handed over (command line, Firefox), waiting for the Add sheet. */
+  takePendingAdd: () => invokeImpl<PendingAdd | null>('take_pending_add'),
+  onOpenAdd: async (cb: (p: PendingAdd) => void) => {
     if (!inTauri) return;
     const event = await import('@tauri-apps/api/event');
-    await event.listen<string>('open-add', (e) => cb(e.payload));
+    await event.listen<PendingAdd>('open-add', (e) => cb(e.payload));
   },
+  // Firefox
+  browserStatus: () => invokeImpl<BrowserStatus>('browser_status'),
+  repairBrowser: () => invokeImpl<BrowserStatus>('repair_browser'),
+  openExtensionFolder: () => invokeImpl<void>('open_extension_folder'),
   clipboardLink: () => invokeImpl<string | null>('clipboard_link'),
   pickFolder: (start?: string | null) => invokeImpl<string | null>('pick_folder', { start: start || null }),
   listen: (cb: (e: CoreEvent) => void) => listenImpl(cb),

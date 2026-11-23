@@ -4,6 +4,7 @@
   import { bytes, doneAt, duration, host, percent, speed, when } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
   import { CATEGORIES, category, typeIcon } from '../lib/types';
+  import { askRemove } from '../lib/actions';
   import PartsMap from './PartsMap.svelte';
   import PieceMap from './PieceMap.svelte';
   import FileTree from './FileTree.svelte';
@@ -206,23 +207,8 @@
         {/if}
       {/if}
       <button class="btn" onclick={() => act(() => api.openFolder(item.id))}><Icon name="folder" />Show in folder</button>
-      <button class="btn ghost danger" onclick={() => (app.confirmDelete = true)}><Icon name="trash" />Remove<kbd>Del</kbd></button>
+      <button class="btn ghost danger" onclick={() => askRemove([item.id], item.status !== 'done')}><Icon name="trash" />Remove<kbd>Del</kbd></button>
     </div>
-
-    {#if app.confirmDelete}
-      <div class="confirm" role="alertdialog" aria-label="Remove download">
-        <p>
-          {#if item.status === 'done'}Remove from the list, or delete the file from disk too?{:else}Remove this download? The partly downloaded data is deleted.{/if}
-        </p>
-        <div class="row">
-          <button class="btn" onclick={() => act(() => api.remove([item.id], false))}>Remove from list</button>
-          {#if item.status === 'done'}
-            <button class="btn danger" onclick={() => act(() => api.remove([item.id], true))}>Delete file too</button>
-          {/if}
-          <button class="btn ghost" onclick={() => (app.confirmDelete = false)}>Keep</button>
-        </div>
-      </div>
-    {/if}
 
     {#if isTorrent && contents && contents.id === item.id}
       <section class="contents" aria-label="Files in this torrent">
@@ -485,20 +471,6 @@
     border-radius: 3px;
     border: 1px solid currentColor;
     opacity: 0.55;
-  }
-  .confirm {
-    border: 1px solid rgb(255 107 107 / 0.4);
-    background: rgb(255 107 107 / 0.08);
-    border-radius: var(--radius);
-    padding: 12px;
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-  .confirm .row {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
   }
   .contents {
     flex: none;

@@ -2,7 +2,8 @@
   import { api } from '../lib/api';
   import { app, run, toast } from '../lib/state.svelte';
   import Icon from '../lib/Icon.svelte';
-  import type { Settings } from '../lib/types';
+  import type { BrowserStatus, Settings } from '../lib/types';
+  import { when } from '../lib/format';
 
   let s = $state<Settings>({ ...(app.settings as Settings) });
   let limitKb = $state(Math.round((app.settings?.speedLimit ?? 0) / 1024));
@@ -15,6 +16,19 @@
   async function registerHandler() {
     const ok = await run(api.registerTorrentHandler().then(() => true));
     if (ok) toast('Magnet links and .torrent files now open in DasIDM');
+  }
+
+  // Firefox: is the helper registered, and has the extension been in touch?
+  let browser = $state<BrowserStatus | null>(null);
+  $effect(() => {
+    api.browserStatus().then((b) => (browser = b)).catch(() => {});
+  });
+  async function repair() {
+    const b = await run(api.repairBrowser());
+    if (b) {
+      browser = b;
+      toast('Firefox can reach DasIDM again');
+    }
   }
 
   async function browse() {
@@ -117,6 +131,24 @@
   {#if restartNeeded}<span class="hint under">Port, UPnP and DHT changes apply the next time DasIDM starts.</span>{/if}
   <button class="btn" onclick={registerHandler}><Icon name="type-torrents" />Use DasIDM for magnets and .torrent files</button>
 
+  <h4>Firefox</h4>
+  <div class="browser">
+    <span class="st" class:ok={browser?.registered && browser?.lastSeen} class:bad={browser && !browser.registered}>
+      {#if !browser}Checking…
+      {:else if !browser.registered}Not set up{browser.error ? `: ${browser.error}` : ''}
+      {:else if browser.lastSeen}Extension connected · {when(browser.lastSeen)}
+      {:else}Ready; the extension hasn't connected yet{/if}
+    </span>
+    <span class="hint">
+      With the DasIDM extension, files you download in Firefox open here instead. Add it in Firefox: <b>about:debugging</b> → This Firefox → Load
+      Temporary Add-on… → <b>manifest.json</b> in the extension folder (until Firefox restarts), or install the signed copy.
+    </span>
+    <div class="btns">
+      <button class="btn" onclick={() => run(api.openExtensionFolder())}><Icon name="folder" />Open extension folder</button>
+      <button class="btn ghost" onclick={repair}><Icon name="restart" />Repair</button>
+    </div>
+  </div>
+
   <div class="foot">
     <button class="btn ghost" onclick={() => (app.panel = 'pass')}>Cancel</button>
     <button class="btn primary" onclick={save}><Icon name="check" />Save</button>
@@ -157,6 +189,39 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
+  }
+  .browser {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .browser .st {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+  }
+  .browser .st::before {
+    content: '';
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--steel);
+  }
+  .browser .st.ok::before {
+    background: var(--ok);
+  }
+  .browser .st.bad {
+    color: var(--bad);
+  }
+  .browser .st.bad::before {
+    background: var(--bad);
+  }
+  .btns {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
   }
   .folderrow {
     display: flex;

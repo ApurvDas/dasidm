@@ -367,10 +367,22 @@ Squared-off, dense and keyboard-labelled: the key that triggers an action is sho
 - **Checkboxes:** native, tinted Departure Yellow.
 
 ### Departures Board (signature)
-The top panel: a Display title with a fog caption beside it, the 60-second speed trace (ivory 1.5px line over a 7% ivory area), and the Numeral XL figures. Rows are ranked by finish time on a 2-second clock with hysteresis (a row overtakes only when clearly sooner, by 15 seconds or 20%), rerank with a 520ms quartic ease-out move, and freeze while the pointer is over the board. A real overtake lights the row (10% yellow ground, Lit Ring) and swaps the status for a "MOVED UP" yellow badge. Each row carries a 3px live strip along its bottom: ivory where bytes are on disk, holes where they are missing, yellow ticks at each write head.
+The top panel: a Display title with a fog caption beside it, the 60-second speed trace (ivory 1.5px line over a 7% ivory area), and the Numeral XL figures. Rows are ranked by finish time on a 2-second clock with hysteresis (a row overtakes only when clearly sooner, by 15 seconds or 20%), rerank with a 520ms quartic ease-out move, and freeze while the pointer is over the board. A real overtake lights the row (10% yellow ground, Lit Ring) and swaps the status for a "MOVED UP" yellow badge. Each row carries a 5px Pieces Bar along its bottom (48 cells for a torrent).
 
 ### Hall List
-The quieter full list: search and the type chips, sortable condensed-mono column headers, then virtualised 34px rows of mark, name, type, size, status (with a 72px mini strip while loading or paused) and added time. Finished and failed rows hold a yellow Lit Ring until seen. The Type cell is a fog type icon plus the type's word, or for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`); below 720px it keeps only the icon.
+The quieter full list: search and the type chips, sortable condensed-mono column headers, then virtualised 34px rows of mark, name, type, size, status (a Pieces Bar up to 150×10px with the percentage beside it in bold condensed mono while loading or paused; the bar gives way first) and added time. The hovered and the selected row show a 26px ⋯ button over the Added cell that opens the Row Menu. Finished and failed rows hold a yellow Lit Ring until seen. The Type cell is a fog type icon plus the type's word, or for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`); below 720px it keeps only the icon.
+
+### Pieces Bar
+A download's bar cut into its pieces: one cell per part a connection is fetching, sized by its byte range, filling from its own start in 82% ivory with a 2px Burnt Yellow head where it writes; finished stretches are solid cells and untouched ones dark (8% ivory). Cells are separated by a real 1px gap that shows the row behind, left off cells under 1.5% wide. Torrents fold their piece map into equal cells; video jobs are one cell. Paused is steel without heads. Fills and heads ease over 0.4s (none with reduced motion).
+
+### Row Menu
+Right-click on a list or board row, its ⋯ button, or Shift+F10: a 232px menu on #1a1f25 with a strong hairline and a deep shadow, the file name in fog condensed mono on top, then groups split by hairlines: what to do now (Open, Pause / Resume / Retry, Start over, Start / Stop seeding), where it is (Show in folder, Open parts or torrent, Copy link), and leaving (Remove from list; Delete from list and PC in bad red). 30px items with a fog icon and a kbd hint; arrows, Home/End, Enter and Esc work; it stays inside the window.
+
+### Delete Dialog
+The only question before anything leaves the PC, shared by the Row Menu, Del, Shift+Del and the Pass: a centred 480px card over a 45% scrim with a red trash icon, the file name in condensed mono, its full path in fog, what goes and how big, and that it skips the Recycle Bin. Delete from PC too (solid bad red when that was asked for), Remove from list only, and Keep, which has focus. Unfinished downloads read "Remove" and say their partial data goes.
+
+### Firefox Popup
+The extension's 320px popup in the same voice: the DASIDM wordmark and a status dot (ok green Connected · version, bad red Not connected with the reason and Retry), then rows on #1a1f25 with switches that turn Burnt Yellow when on (Grab downloads, Also in private windows) and the minimum size, and the last file handed over in fog.
 
 ### Type Chips and Type Icons
 Types are told apart by shape and word, never by colour (Yellow Means Change). Each type has one stroke icon on the 16px grid at 1.5px (video frame with play, note, terminal window, box, disc, page, picture, magnet, globe, blank page). Chips follow the filter-tab pattern: 28px, fog text, the icon, the word and a condensed-mono count; the chosen chip takes the 9% ivory ground. Only types present are shown. When the words don't all fit, every chip except the chosen one drops its word and keeps icon and count (measured, not breakpointed).

@@ -430,6 +430,11 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'set_torrent_files':
       mockChosen = (args.only as number[]).length === mockFiles.length ? null : args.only;
       return undefined as T;
+    case 'browser_status':
+    case 'repair_browser':
+      return { registered: true, manifest: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\dev.dasidm.host.json', extensionDir: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\firefox', error: null, lastSeen: Date.now() - 90_000 } as T;
+    case 'open_extension_folder':
+      return undefined as T;
     case 'seed':
       args.ids.forEach((id: string) => {
         const it = find(id);
@@ -444,7 +449,15 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'register_torrent_handler':
       return undefined as T;
     case 'pause':
-      set(args.ids, 'paused');
+      // A finished torrent only stops seeding; it stays finished.
+      for (const id of args.ids as string[]) {
+        const it = find(id);
+        if (it?.torrent && it.status === 'done') {
+          it.torrent = { ...it.torrent, seeding: false };
+          emit({ type: 'upsert', item: { ...it } });
+        }
+      }
+      set((args.ids as string[]).filter((id) => find(id)?.status !== 'done'), 'paused');
       return undefined as T;
     case 'resume':
     case 'restart':

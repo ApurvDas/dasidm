@@ -6,6 +6,8 @@
   import { CATEGORIES, category, typeIcon } from '../lib/types';
   import PartsMap from './PartsMap.svelte';
   import PieceMap from './PieceMap.svelte';
+  import FileTree from './FileTree.svelte';
+  import type { TorrentFile } from '../lib/types';
   import { thumbOf } from '../lib/state.svelte';
   import { PHASE, mediaLine } from '../lib/media';
   import { clock } from '../lib/format';
@@ -32,6 +34,36 @@
     // example.co.uk / example.com.au: skip the short second-level label
     const name = parts.length > 2 && tld.length === 2 && sld.length <= 3 ? parts[parts.length - 3] : sld;
     return name;
+  }
+
+  // What is inside a torrent, filling up file by file. Read while it downloads or seeds (the
+  // session runs then anyway); a paused torrent keeps the last list instead of waking it.
+  let contents = $state<{ id: string; files: TorrentFile[]; chosen: Set<number> } | null>(null);
+  const live = $derived(isTorrent && (item?.status === 'downloading' || !!item?.torrent?.seeding));
+  $effect(() => {
+    const id = item?.id;
+    if (!id || !live) return;
+    let alive = true;
+    const load = () =>
+      api
+        .torrentFiles(id)
+        .then((r) => {
+          if (alive && r.files.length) contents = { id, files: r.files, chosen: new Set(r.chosen ?? r.files.map((f) => f.index)) };
+        })
+        .catch(() => {});
+    load();
+    const t = setInterval(load, 1500);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  });
+  const fetching = $derived(contents ? contents.files.filter((f) => contents!.chosen.has(f.index)) : []);
+  const finished = $derived(fetching.filter((f) => f.done >= f.size).length);
+
+  function chooseFiles() {
+    app.torrentTab = 'files';
+    app.partsOpen = true;
   }
 
   async function act(fn: () => Promise<unknown>) {
@@ -190,6 +222,19 @@
           <button class="btn ghost" onclick={() => (app.confirmDelete = false)}>Keep</button>
         </div>
       </div>
+    {/if}
+
+    {#if isTorrent && contents && contents.id === item.id}
+      <section class="contents" aria-label="Files in this torrent">
+        <div class="chead">
+          <span class="ct">In this torrent</span>
+          <span class="cn">{finished} of {fetching.length} {fetching.length === 1 ? 'file' : 'files'} done</span>
+          <button class="btn ghost sm" onclick={chooseFiles}>Choose files</button>
+        </div>
+        <div class="clist">
+          <FileTree files={contents.files} root={item.fileName} chosen={contents.chosen} progress folded />
+        </div>
+      </section>
     {/if}
   {:else}
     <div class="nothing">
@@ -454,6 +499,39 @@
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
+  }
+  .contents {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: rgb(0 0 0 / 0.12);
+    overflow: hidden;
+  }
+  .chead {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 6px 6px 12px;
+    border-bottom: 1px solid var(--line-strong);
+  }
+  .ct {
+    font-weight: 600;
+  }
+  .cn {
+    flex: 1;
+    color: var(--fog);
+    font-size: 12px;
+  }
+  .sm {
+    height: 26px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+  .clist {
+    max-height: 300px;
+    overflow: hidden auto;
   }
   .nothing {
     color: var(--fog);

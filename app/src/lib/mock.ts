@@ -115,12 +115,13 @@ items.push(
   }),
 );
 
-// Torrents: one loading from a swarm, one finished and seeding.
+// Torrents: a film loading from a swarm, and an album finished and seeding.
+const MOVIE = 'Sprite Fright (2021) [2160p HDR]';
 const tv = (over: Partial<NonNullable<ItemView['torrent']>> = {}) => ({ infoHash: 'c0ffee'.padEnd(40, '0'), files: 6, chosenFiles: null, private: false, uploaded: 0, ratio: 0, seeding: false, ...over });
 items.push(
   item({
-    id: 't1', fileName: 'Open Movie Collection (2026)', status: 'downloading', category: 'torrents', size: 7.4 * GB, downloaded: 3.1 * GB,
-    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:c0ffee', torrent: tv({ files: 6, chosenFiles: 5, uploaded: 410 * MB, ratio: 0.05 }),
+    id: 't1', fileName: MOVIE, status: 'downloading', category: 'torrents', size: 7.4 * GB, downloaded: 3.1 * GB,
+    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:c0ffee', torrent: tv({ files: 13, chosenFiles: 12, uploaded: 410 * MB, ratio: 0.05 }),
   }),
   item({
     id: 't2', fileName: 'field-recordings-48k.flac', status: 'done', category: 'torrents', size: 840 * MB, downloaded: 840 * MB,
@@ -137,15 +138,26 @@ let mockTrackers: TrackerView[] = [
   { url: 'http://tracker.example-four.com:80/announce', tier: 1, state: 'updating', seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: null },
   { url: 'wss://tracker.example-web.com', tier: 2, state: 'disabled', seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: 'wss:// trackers are not supported' },
 ];
-const mockFiles = [
-  ['Open Movie Collection (2026)\\Sprite Fright (2160p).mkv', 2.9 * GB],
-  ['Open Movie Collection (2026)\\Charge (1080p).mkv', 1.2 * GB],
-  ['Open Movie Collection (2026)\\Wing It! (1080p).mkv', 1.1 * GB],
-  ['Open Movie Collection (2026)\\Coffee Run (1080p).mkv', 0.9 * GB],
-  ['Open Movie Collection (2026)\\Extras\\Making of.mp4', 1.3 * GB],
-  ['Open Movie Collection (2026)\\README.txt', 4 * 1024],
-].map(([path, size], index) => ({ index, path: path as string, size: size as number, done: index === 0 ? (size as number) : index < 3 ? (size as number) * 0.4 : 0 }));
-let mockChosen: number[] | null = [0, 1, 2, 3, 5];
+// The film's folder as a release usually comes: the film, subtitles, extras, a sample.
+const mockFiles = (
+  [
+    ['Sprite Fright (2021) [2160p HDR].mkv', 5.9 * GB, 0.38],
+    ['Subs\\English.srt', 61 * 1024, 1],
+    ['Subs\\English (SDH).srt', 68 * 1024, 1],
+    ['Subs\\Hindi.srt', 94 * 1024, 1],
+    ['Subs\\Spanish.srt', 63 * 1024, 0],
+    ['Extras\\Making of Sprite Fright.mp4', 1.2 * GB, 0.22],
+    ['Extras\\Trailer.mp4', 182 * MB, 1],
+    ['Sample\\sample.mkv', 64 * MB, 0],
+    ['poster.jpg', 1.4 * MB, 1],
+    ['README.txt', 4 * 1024, 1],
+    // Stills as uploaders add them: long names that only differ at the end.
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Media Info.txt', 26 * 1024, 1],
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Screenshot 01.png', 10.6 * MB, 1],
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Screenshot 02.png', 11.9 * MB, 0.5],
+  ] as const
+).map(([path, size, done], index) => ({ index, path: `${MOVIE}\\${path}`, size, done: size * done }));
+let mockChosen: number[] | null = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
 
 // ?empty previews the first run: no downloads at all.
 if (new URLSearchParams(location.search).has('empty')) {
@@ -373,7 +385,7 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'torrent_preview': {
       await new Promise((r) => setTimeout(r, /^magnet/.test(args.link ?? '') ? 1400 : 500));
       return {
-        infoHash: 'ab12'.padEnd(40, '0'), name: 'Open Movie Collection (2026)', size: mockFiles.reduce((a, f) => a + f.size, 0),
+        infoHash: 'ab12'.padEnd(40, '0'), name: MOVIE, size: mockFiles.reduce((a, f) => a + f.size, 0),
         files: mockFiles.map((f) => ({ ...f, done: 0 })), trackers: mockTrackers.slice(0, 3).map((t) => t.url), private: false, pieceSize: 4 * MB, pieces: 1890,
       } as TorrentPreview as T;
     }
@@ -409,6 +421,11 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
       setTimeout(() => (mockTrackers = mockTrackers.map((t) => (t.state === 'updating' ? { ...t, state: t.url.includes('three') ? 'notWorking' : 'working', lastAnnounce: Date.now() } : t))), 1200);
       return undefined as T;
     case 'torrent_files':
+      if (args.id === 't2') return { files: [{ index: 0, path: 'field-recordings-48k.flac', size: 840 * MB, done: 840 * MB }], chosen: null } as T;
+      // Chosen files keep filling, a few at a time, as peers send pieces.
+      for (const f of mockFiles) {
+        if (args.id === 't1' && (mockChosen ?? []).includes(f.index) && f.done < f.size) f.done = Math.min(f.size, f.done + f.size * 0.004 + 2 * MB);
+      }
       return { files: mockFiles.map((f) => ({ ...f })), chosen: mockChosen } as T;
     case 'set_torrent_files':
       mockChosen = (args.only as number[]).length === mockFiles.length ? null : args.only;

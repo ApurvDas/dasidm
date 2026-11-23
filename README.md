@@ -41,6 +41,13 @@ Tests:
 cargo test -p das-engine -p das-core
 ```
 
+## Git workflow
+
+- `main` is always releasable; each release is a tag (`v0.1.0`, …). Remote: private GitHub repo `ApurvDas/dasidm`.
+- New work goes on a branch named for the feature (`feature/media-and-add-flow`), one commit per milestone with tests passing, then a pull request into `main`.
+- Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
+- Plans for upcoming phases live in `docs/plans/` (e.g. `docs/plans/torrents.md`).
+
 ## Layout
 
 ```

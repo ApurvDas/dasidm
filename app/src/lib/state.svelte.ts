@@ -21,7 +21,10 @@ export const app = $state({
   settings: null as Settings | null,
   panel: 'pass' as 'pass' | 'settings',
   adding: false as boolean | string,
-  confirmDelete: false,
+  /** The row menu: which download, and where it opens. */
+  menu: null as { id: string; x: number; y: number } | null,
+  /** A removal waiting for an answer (`files`: also delete what is on disk). */
+  ask: null as { ids: string[]; files: boolean } | null,
   toast: null as string | null,
   /** Full-width parts view for the selected download. */
   partsOpen: false,
@@ -162,7 +165,6 @@ export function seen(id: string) {
 
 export function select(id: string | null) {
   app.selected = id;
-  app.confirmDelete = false;
   app.panel = 'pass';
   if (id) seen(id);
 }

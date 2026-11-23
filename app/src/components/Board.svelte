@@ -179,6 +179,11 @@
         class:sel={app.selected === i.id}
         animate:reorder={{ duration: reducedMotion() ? 0 : 520, easing: (t) => 1 - Math.pow(1 - t, 4) }}
         onclick={() => select(i.id)}
+        oncontextmenu={(e) => {
+          e.preventDefault();
+          select(i.id);
+          app.menu = { id: i.id, x: e.clientX, y: e.clientY };
+        }}
         onpointerenter={() => seen(i.id)}
       >
         <span class="time">{i.status === 'queued' ? '--:--' : doneAt(p?.eta)}</span>

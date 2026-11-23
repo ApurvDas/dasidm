@@ -444,7 +444,15 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'register_torrent_handler':
       return undefined as T;
     case 'pause':
-      set(args.ids, 'paused');
+      // A finished torrent only stops seeding; it stays finished.
+      for (const id of args.ids as string[]) {
+        const it = find(id);
+        if (it?.torrent && it.status === 'done') {
+          it.torrent = { ...it.torrent, seeding: false };
+          emit({ type: 'upsert', item: { ...it } });
+        }
+      }
+      set((args.ids as string[]).filter((id) => find(id)?.status !== 'done'), 'paused');
       return undefined as T;
     case 'resume':
     case 'restart':

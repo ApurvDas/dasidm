@@ -170,7 +170,13 @@
           role="option"
           aria-selected={app.selected === i.id}
           tabindex="-1"
+          data-row={i.id}
           onclick={() => select(i.id)}
+          oncontextmenu={(e) => {
+            e.preventDefault();
+            select(i.id);
+            app.menu = { id: i.id, x: e.clientX, y: e.clientY };
+          }}
           ondblclick={() => i.status === 'done' && window.dispatchEvent(new CustomEvent('das:open', { detail: i.id }))}
           onkeydown={() => {}}
         >
@@ -197,6 +203,18 @@
             <span class="stext">{statusText(i)}</span>
           </span>
           <span class="added">{when(i.addedAt)}</span>
+          <button
+            class="more"
+            aria-label="Actions for {i.fileName}"
+            title="Actions"
+            onclick={(e) => {
+              e.stopPropagation();
+              select(i.id);
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              app.menu = { id: i.id, x: r.right - 232, y: r.bottom + 4 };
+            }}
+            ondblclick={(e) => e.stopPropagation()}><Icon name="dots" size={14} /></button
+          >
         </div>
       {/each}
     </div>
@@ -446,6 +464,31 @@
   .added {
     color: var(--fog);
     white-space: nowrap;
+  }
+  /* The row's ⋯ menu button: shown on the hovered and the selected row, over the Added cell. */
+  .more {
+    position: absolute;
+    right: 8px;
+    top: 4px;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    color: var(--fog);
+    background: rgb(26 31 37 / 0.92);
+    opacity: 0;
+    pointer-events: none;
+  }
+  .tr:hover .more,
+  .tr.sel .more,
+  .more:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .more:hover {
+    color: var(--ivory);
+    background: #2a3038;
   }
   .none {
     position: absolute;

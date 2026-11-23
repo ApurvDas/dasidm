@@ -25,6 +25,7 @@
     edit: 'M3 13h3l7-7-3-3-7 7zM9 4l3 3',
     copy: 'M5.5 5.5h7v7h-7zM3.5 10.5v-7h7',
     upload: 'M8 12.5v-9M4.5 7L8 3.5 11.5 7M3 13.5h10',
+    dots: 'M3 8a1 1 0 1 0 2 0a1 1 0 1 0-2 0M7 8a1 1 0 1 0 2 0a1 1 0 1 0-2 0M11 8a1 1 0 1 0 2 0a1 1 0 1 0-2 0',
     // File types: told apart by shape, never by colour (yellow stays for change).
     'type-video': 'M2 3.5h12v9H2zM6.5 6v4l3.5-2z',
     'type-music': 'M6 11.5V4l7-1.5v7.5M6 11.5a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0zM13 10a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0z',

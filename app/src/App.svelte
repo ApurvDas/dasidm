@@ -9,6 +9,9 @@
   import StatusBar from './components/StatusBar.svelte';
   import PartsView from './components/PartsView.svelte';
   import TorrentView from './components/TorrentView.svelte';
+  import RowMenu from './components/RowMenu.svelte';
+  import DeleteDialog from './components/DeleteDialog.svelte';
+  import { askRemove } from './lib/actions';
   import { api, inTauri } from './lib/api';
   import { app, init, run, select } from './lib/state.svelte';
 
@@ -55,7 +58,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (app.adding || typing(e.target)) return;
+    if (app.adding || app.ask || app.menu || typing(e.target)) return;
     const id = app.selected;
     const item = id ? app.items[id] : null;
     if (e.ctrlKey && e.key.toLowerCase() === 'f') {
@@ -68,7 +71,6 @@
       e.preventDefault();
       hall?.move(e.key === 'ArrowDown' ? 1 : -1);
     } else if (e.key === 'Escape') {
-      app.confirmDelete = false;
       app.partsOpen = false;
       app.panel = 'pass';
     } else if (e.key.toLowerCase() === 'p' && !e.ctrlKey && item) {
@@ -82,8 +84,13 @@
     } else if (e.key === 'Enter' && item.status === 'done') {
       run(api.openFile(item.id));
     } else if (e.key === 'Delete') {
-      app.panel = 'pass';
-      app.confirmDelete = true;
+      // Del asks (remove, or delete the files too); Shift+Del goes straight to deleting.
+      e.preventDefault();
+      askRemove([item.id], e.shiftKey || item.status !== 'done');
+    } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      e.preventDefault();
+      const r = document.querySelector(`[data-row="${CSS.escape(item.id)}"]`)?.getBoundingClientRect();
+      app.menu = { id: item.id, x: r ? r.left + 40 : innerWidth / 3, y: r ? r.bottom : innerHeight / 3 };
     }
   }
 </script>
@@ -116,6 +123,8 @@
 {#if app.adding}
   <AddSheet />
 {/if}
+<RowMenu />
+<DeleteDialog />
 
 <style>
   .shell {

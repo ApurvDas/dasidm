@@ -38,6 +38,9 @@ pub struct Item {
     /// The user chose the name; do not replace it with the server's.
     #[serde(default)]
     pub name_fixed: bool,
+    /// The user confirmed they want the web page itself saved.
+    #[serde(default)]
+    pub allow_html: bool,
 }
 
 /// What the UI sees for one row.
@@ -141,6 +144,9 @@ pub struct AddRequest {
     /// false = add paused.
     #[serde(default = "yes")]
     pub start: bool,
+    /// Save the link even if it turns out to be a web page.
+    #[serde(default)]
+    pub allow_page: bool,
 }
 
 fn yes() -> bool {

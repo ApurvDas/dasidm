@@ -76,7 +76,12 @@ export interface AddRequest {
   connections?: number | null;
   headers?: [string, string][];
   start: boolean;
+  /** Save the link even if it is a web page. */
+  allowPage?: boolean;
 }
+
+export const isWebPage = (contentType: string | null | undefined) =>
+  !!contentType && /^(text\/html|application\/xhtml\+xml)\b/i.test(contentType.trim());
 
 export type CoreEvent =
   | { type: 'upsert'; item: ItemView }
@@ -93,5 +98,6 @@ export const CATEGORIES: { id: string; name: string }[] = [
   { id: 'documents', name: 'Documents' },
   { id: 'images', name: 'Images' },
   { id: 'torrents', name: 'Torrents' },
+  { id: 'web', name: 'Web pages' },
   { id: 'other', name: 'Other' },
 ];

@@ -1,6 +1,6 @@
 //! Owns all downloads: queue admission, engine jobs, progress batching, checkpoints.
 
-use crate::categories::{categorize, folder_for};
+use crate::categories::{categorize, categorize_with, folder_for};
 use crate::db::Db;
 use crate::model::*;
 use crate::settings::Settings;
@@ -126,7 +126,7 @@ impl Manager {
     }
 
     pub async fn probe(&self, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {
-        let req = DownloadRequest { url, headers, save_dir: PathBuf::new(), file_name: None, connections: 1 };
+        let req = DownloadRequest { url, headers, save_dir: PathBuf::new(), file_name: None, connections: 1, allow_html: true };
         self.inner.engine.probe(&req).await.map_err(|e| e.to_string())
     }
 
@@ -172,6 +172,7 @@ impl Manager {
                 resume: None,
                 position,
                 name_fixed,
+                allow_html: req.allow_page,
             };
             let _ = self.inner.db.lock().save_item(&item);
             let view = ItemView::from(&item);
@@ -344,6 +345,7 @@ impl Inner {
                     save_dir: PathBuf::from(&item.save_dir),
                     file_name: item.name_fixed.then(|| item.file_name.clone()),
                     connections: item.connections as usize,
+                    allow_html: item.allow_html,
                 };
                 let handle = self.engine.start(req, item.resume.clone(), vec![]);
                 item.status = Status::Downloading;
@@ -465,7 +467,15 @@ impl Inner {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     if !name.is_empty() && name != item.file_name {
                         item.file_name = name;
-                        item.category = categorize(&item.file_name).to_string();
+                        item.category = categorize_with(&item.file_name, snap.content_type.as_deref()).to_string();
+                        renamed.push(ItemView::from(&*item));
+                    }
+                }
+                // A name without a telling extension: let the server's Content-Type decide.
+                if item.category == "other" {
+                    let by_type = categorize_with(&item.file_name, snap.content_type.as_deref());
+                    if by_type != "other" {
+                        item.category = by_type.to_string();
                         renamed.push(ItemView::from(&*item));
                     }
                 }
@@ -567,6 +577,7 @@ fn friendly_error(e: &EngineError) -> String {
         EngineError::Http(416) => "Server refused the byte range".into(),
         EngineError::Http(code) => format!("Server error {code}"),
         EngineError::ValidatorMismatch => "File changed on the server; restart it".into(),
+        EngineError::WebPage => "This link is a web page, not a file".into(),
         EngineError::NoProgress => "Server stopped sending data".into(),
         EngineError::Network(m) => format!("Network problem: {m}"),
         EngineError::Io(m) => format!("Disk problem: {m}"),

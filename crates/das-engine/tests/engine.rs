@@ -75,7 +75,16 @@ async fn server() -> String {
     let app = axum::Router::new()
         .route("/file", get(|Query(q): Query<HashMap<String, String>>, h: HeaderMap| serve_file(q, h, true)))
         .route("/norange", get(|Query(q): Query<HashMap<String, String>>, h: HeaderMap| serve_file(q, h, false)))
-        .route("/missing", get(|| async { StatusCode::NOT_FOUND }));
+        .route("/missing", get(|| async { StatusCode::NOT_FOUND }))
+        .route(
+            "/page",
+            get(|| async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .body(Body::from("<!doctype html><title>Share</title>"))
+                    .unwrap()
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -87,7 +96,21 @@ fn engine() -> Engine {
 }
 
 fn req(url: String, dir: &std::path::Path, conns: usize) -> DownloadRequest {
-    DownloadRequest { url, headers: vec![], save_dir: dir.to_path_buf(), file_name: None, connections: conns }
+    DownloadRequest { url, headers: vec![], save_dir: dir.to_path_buf(), file_name: None, connections: conns, allow_html: false }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn web_pages_are_refused_unless_asked() {
+    let base = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let h = engine().start(req(format!("{base}/page"), dir.path(), 4), None, vec![]);
+    assert_eq!(h.wait().await.unwrap_err(), EngineError::WebPage);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0, "no file may be created for a refused page");
+
+    let mut r = req(format!("{base}/page"), dir.path(), 4);
+    r.allow_html = true;
+    let done = engine().start(r, None, vec![]).wait().await.unwrap();
+    assert!(std::fs::read_to_string(done.path).unwrap().contains("<title>Share</title>"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

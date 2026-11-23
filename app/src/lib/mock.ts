@@ -199,6 +199,9 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'probe_url': {
       await new Promise((r) => setTimeout(r, 450));
       const name = decodeURIComponent(new URL(args.url).pathname.split('/').pop() || 'download');
+      if (/youtu\.?be|vimeo|soundcloud|\/watch/.test(args.url)) {
+        return { final_url: args.url, file_name: name || 'watch', size: null, resumable: false, content_type: 'text/html; charset=utf-8' } as T;
+      }
       return { final_url: args.url, file_name: name, size: 734 * MB, resumable: true, content_type: 'application/octet-stream' } as T;
     }
     case 'add_download': {

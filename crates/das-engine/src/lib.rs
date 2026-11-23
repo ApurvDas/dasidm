@@ -30,6 +30,17 @@ pub struct DownloadRequest {
     #[serde(default)]
     pub file_name: Option<String>,
     pub connections: usize,
+    /// Save an HTML page as a file. Off by default: a web page is almost never what the
+    /// user meant to download (e.g. a YouTube share link).
+    #[serde(default)]
+    pub allow_html: bool,
+}
+
+/// Content types that mean "this is a web page, not a file".
+pub fn is_web_page(content_type: Option<&str>) -> bool {
+    content_type
+        .map(|c| c.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .is_some_and(|c| c == "text/html" || c == "application/xhtml+xml")
 }
 
 /// Everything needed to continue a stopped download.
@@ -85,6 +96,8 @@ pub enum EngineError {
     Cancelled,
     #[error("invalid address: {0}")]
     BadUrl(String),
+    #[error("this link is a web page, not a file")]
+    WebPage,
 }
 
 impl EngineError {

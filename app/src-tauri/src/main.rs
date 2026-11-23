@@ -144,7 +144,15 @@ fn add_urls(app: &AppHandle, args: &[String]) {
     let core = app.state::<App>().core.clone();
     tauri::async_runtime::spawn(async move {
         for url in urls {
-            let _ = core.add(AddRequest { url, file_name: None, save_dir: None, connections: None, headers: vec![], start: true });
+            let _ = core.add(AddRequest {
+                url,
+                file_name: None,
+                save_dir: None,
+                connections: None,
+                headers: vec![],
+                start: true,
+                allow_page: false,
+            });
         }
     });
 }

@@ -3,7 +3,7 @@
   import { app, run, select } from '../lib/state.svelte';
   import { bytes } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
-  import type { ProbeInfo } from '../lib/types';
+  import { isWebPage, type ProbeInfo } from '../lib/types';
 
   let url = $state(typeof app.adding === 'string' ? app.adding : '');
   let name = $state('');
@@ -21,6 +21,8 @@
   });
 
   const valid = $derived(/^https?:\/\/\S+$/i.test(url.trim()));
+  // A link that answers with HTML is a page (e.g. a share link), not a file.
+  const isPage = $derived(!!info && isWebPage(info.content_type));
 
   $effect(() => {
     const u = url.trim();
@@ -48,8 +50,8 @@
     app.adding = false;
   }
 
-  async function submit(start: boolean) {
-    if (!valid) return;
+  async function submit(start: boolean, allowPage = false) {
+    if (!valid || (isPage && !allowPage)) return;
     const added = await run(
       api.add({
         url: url.trim(),
@@ -57,6 +59,7 @@
         saveDir: folder.trim() || null,
         connections: lines,
         start,
+        allowPage,
       }),
     );
     if (added) {
@@ -102,6 +105,8 @@
       <span class="cap">Asking the server…</span>
     {:else if error}
       <span class="bad">{error}. You can still add it; DasIDM will retry.</span>
+    {:else if isPage}
+      <span class="page-line"><Icon name="alert" /> This link is a web page, not a file. DasIDM won't save it unless you ask.</span>
     {:else if info}
       <span class="ok-line">
         <b>{bytes(info.size)}</b>
@@ -134,8 +139,12 @@
 
   <div class="foot">
     <button class="btn ghost" onclick={close}>Cancel<kbd>Esc</kbd></button>
-    <button class="btn" disabled={!valid} onclick={() => submit(false)}>Add paused</button>
-    <button class="btn primary" disabled={!valid} onclick={() => submit(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
+    {#if isPage}
+      <button class="btn" onclick={() => submit(true, true)}>Save page anyway</button>
+    {:else}
+      <button class="btn" disabled={!valid} onclick={() => submit(false)}>Add paused</button>
+      <button class="btn primary" disabled={!valid} onclick={() => submit(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
+    {/if}
   </div>
 </div>
 
@@ -210,6 +219,16 @@
   }
   .bad {
     color: var(--bad);
+  }
+  .page-line {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--ivory);
+  }
+  .page-line :global(svg) {
+    color: var(--fog);
+    flex: none;
   }
   .grid {
     display: grid;

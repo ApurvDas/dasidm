@@ -62,6 +62,7 @@ async fn add_download_complete_and_persist() {
             connections: Some(4),
             headers: vec![],
             start: true,
+            allow_page: false,
         })
         .unwrap();
     assert_eq!(item.category, "music");

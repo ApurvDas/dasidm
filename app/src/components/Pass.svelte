@@ -400,8 +400,12 @@
   .seg.two {
     grid-template-columns: 1fr 1fr;
   }
+  /* Speed, Peers, Ratio: Ratio carries the upload speed underneath, so it gets the room. */
   .seg.three {
-    grid-template-columns: 1.6fr 0.9fr 0.9fr;
+    grid-template-columns: 1.25fr 0.85fr 1.15fr;
+  }
+  .seg.three > div {
+    padding-inline: 13px;
   }
   .seg.three b {
     font-size: 15px;
@@ -409,6 +413,14 @@
   .seg > div {
     padding: 10px 16px;
     min-width: 0;
+  }
+  /* Live figures change every second: the small line under each one stays a single line, so
+     the pass never grows or shrinks while a download runs. */
+  .seg > div > .sub {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .seg > div + div {
     border-left: 1px dashed #a7aca4;
@@ -493,8 +505,12 @@
   }
   .cn {
     flex: 1;
+    min-width: 0;
     color: var(--fog);
     font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .sm {
     height: 26px;

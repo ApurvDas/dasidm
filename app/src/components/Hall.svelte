@@ -433,10 +433,11 @@
     gap: 10px;
     min-width: 0;
   }
-  /* The pieces bar gives way before the percentage beside it does. */
+  /* The pieces bar keeps one width while the speed text beside it changes; the text is what
+     gets cut short. */
   .mini {
-    flex: 0 1 150px;
-    min-width: 48px;
+    flex: none;
+    width: 120px;
   }
   .pcv {
     flex: none;
@@ -451,6 +452,7 @@
     color: var(--fog);
   }
   .stext {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

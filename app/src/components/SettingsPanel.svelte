@@ -31,6 +31,19 @@
     }
   }
 
+  // Public trackers for every new torrent: merged into the list, never replacing it.
+  let fetchingTrackers = $state(false);
+  async function addPublicTrackers() {
+    fetchingTrackers = true;
+    const list = await run(api.publicTrackers());
+    fetchingTrackers = false;
+    if (!list) return;
+    const have = s.defaultTrackers.split(/\s+/).filter(Boolean);
+    const fresh = list.filter((t) => !have.includes(t));
+    s.defaultTrackers = [...have, ...fresh].join('\n');
+    toast(fresh.length ? `Added ${fresh.length} public trackers; Save to keep them` : 'Those trackers are already in the list');
+  }
+
   async function browse() {
     const picked = await run(api.pickFolder(s.downloadDir));
     if (picked) s.downloadDir = picked;
@@ -118,6 +131,10 @@
     <span class="cap">Trackers for every new torrent</span>
     <textarea class="field area" rows="3" spellcheck="false" bind:value={s.defaultTrackers} placeholder="One per line: udp://…, https://…"></textarea>
   </label>
+  <div class="trackrow">
+    <button class="btn" onclick={addPublicTrackers} disabled={fetchingTrackers}><Icon name="search" />{fetchingTrackers ? 'Getting the list…' : 'Add public trackers'}</button>
+    <span class="hint">Today's list from github.com/ngosang/trackerslist. More trackers find more peers on public torrents.</span>
+  </div>
   <div class="two">
     <label>
       <span class="cap">Incoming port</span>
@@ -190,6 +207,13 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
+  }
+  .trackrow {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: -6px;
   }
   .browser {
     display: flex;

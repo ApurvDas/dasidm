@@ -80,6 +80,17 @@
     await run(api.reannounce(item.id));
     toast('Asking every tracker for peers now');
   }
+  // More trackers hand out more peers: today's public list, added and asked in one go.
+  let finding = $state(false);
+  async function findMorePeers() {
+    if (!item || finding) return;
+    finding = true;
+    const r = await run(api.findMorePeers(item.id));
+    finding = false;
+    if (!r) return;
+    toast(r.added ? `Added ${r.added} public ${r.added === 1 ? 'tracker' : 'trackers'}; asking them all for peers` : `All ${r.total} public trackers are already here; asking them for peers again`);
+    trackers = await api.trackers(item.id);
+  }
   async function copyAll() {
     await navigator.clipboard.writeText(trackers.map((t) => t.url).join('\n'));
     toast(`Copied ${trackers.length} trackers`);
@@ -215,6 +226,9 @@
       <textarea class="field" bind:value={adding} rows="2" spellcheck="false" placeholder="Add trackers: one or more addresses, one per line"></textarea>
       <div class="btns">
         <button class="btn primary" disabled={!adding.trim()} onclick={addTrackers}><Icon name="plus" />Add</button>
+        <button class="btn" onclick={findMorePeers} disabled={finding || !!item?.torrent?.private} title={item?.torrent?.private ? 'Private torrents use only their own trackers' : 'Adds the public tracker list from github.com/ngosang/trackerslist'}
+          ><Icon name="search" />{finding ? 'Finding…' : 'Find more peers'}</button
+        >
         <button class="btn" onclick={reannounce}><Icon name="restart" />Ask all now</button>
         <button class="btn ghost" disabled={!trackers.length} onclick={copyAll}><Icon name="copy" />Copy all</button>
       </div>

@@ -169,6 +169,25 @@ fn add_trackers(app: State<'_, App>, id: String, urls: Vec<String>) -> Res<usize
     app.core.add_trackers(&id, urls)
 }
 
+#[derive(serde::Serialize)]
+struct MorePeers {
+    added: usize,
+    total: usize,
+}
+
+/// "Find more peers": add today's public tracker list to a torrent and ask them all now.
+#[tauri::command]
+async fn find_more_peers(app: State<'_, App>, id: String) -> Res<MorePeers> {
+    let (added, total) = app.core.find_more_peers(&id).await?;
+    Ok(MorePeers { added, total })
+}
+
+/// Today's public tracker list, for Settings' trackers for every new torrent.
+#[tauri::command]
+async fn public_trackers(app: State<'_, App>) -> Res<Vec<String>> {
+    app.core.public_trackers().await
+}
+
 #[tauri::command]
 fn remove_trackers(app: State<'_, App>, id: String, urls: Vec<String>) -> Res<usize> {
     app.core.remove_trackers(&id, urls)
@@ -462,6 +481,8 @@ fn main() {
             torrent_preview,
             add_torrent,
             torrent_trackers,
+            find_more_peers,
+            public_trackers,
             add_trackers,
             remove_trackers,
             replace_tracker,

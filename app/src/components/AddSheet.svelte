@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { api } from '../lib/api';
   import { app, run, select } from '../lib/state.svelte';
   import { bytes } from '../lib/format';
@@ -14,12 +15,32 @@
   let error = $state('');
   let input = $state<HTMLInputElement>();
   let token = 0;
+  /** The link came from the clipboard (Add URL / Ctrl+N), not from typing or pasting. */
+  let fromClip = $state(false);
+
+  onMount(async () => {
+    if (app.adding !== true) return;
+    const link = await api.clipboardLink().catch(() => null);
+    if (link && !url) {
+      url = link;
+      fromClip = true;
+      await tick();
+      input?.select();
+    }
+  });
+
+  async function browse() {
+    const start = folder.trim() || app.settings?.downloadDir;
+    const picked = await run(api.pickFolder(start));
+    if (picked) folder = picked;
+  }
 
   $effect(() => {
     input?.focus();
     input?.select();
   });
 
+  const magnet = $derived(/^magnet:\?/i.test(url.trim()));
   const valid = $derived(/^https?:\/\/\S+$/i.test(url.trim()));
   // A link that answers with HTML is a page (e.g. a share link), not a file.
   const isPage = $derived(!!info && isWebPage(info.content_type));
@@ -97,7 +118,8 @@
   <label class="cap" for="add-url">Link to download</label>
   <div class="urlrow">
     <Icon name="link" />
-    <input id="add-url" bind:this={input} class="field" bind:value={url} placeholder="https://…" spellcheck="false" autocomplete="off" />
+    <input id="add-url" bind:this={input} class="field" bind:value={url} oninput={() => (fromClip = false)} placeholder="https://…" spellcheck="false" autocomplete="off" />
+    {#if fromClip}<span class="clip">From clipboard</span>{/if}
   </div>
 
   <div class="probe" aria-live="polite">
@@ -113,6 +135,8 @@
         <span class="tag" class:no={!info.resumable}>{info.resumable ? 'Resumable · multi-line' : 'No resume · single line'}</span>
         {#if info.content_type}<span class="cap">{info.content_type.split(';')[0]}</span>{/if}
       </span>
+    {:else if magnet}
+      <span class="cap">Magnet links need torrent support, which comes in a later version.</span>
     {:else if url && !valid}
       <span class="cap">Links start with http:// or https://</span>
     {/if}
@@ -131,10 +155,13 @@
         {/each}
       </select>
     </label>
-    <label class="wide">
-      <span class="cap">Folder</span>
-      <input class="field" bind:value={folder} placeholder={app.settings?.categoryFolders ? `${app.settings?.downloadDir}\\<type>` : app.settings?.downloadDir} spellcheck="false" />
-    </label>
+    <div class="wide">
+      <label class="cap" for="add-folder">Folder</label>
+      <div class="folderrow">
+        <input id="add-folder" class="field" bind:value={folder} placeholder={app.settings?.categoryFolders ? `${app.settings?.downloadDir}\\<type>` : app.settings?.downloadDir} spellcheck="false" />
+        <button class="btn" onclick={browse}><Icon name="folder" />Browse…</button>
+      </div>
+    </div>
   </div>
 
   <div class="foot">
@@ -190,6 +217,33 @@
     height: 36px;
     padding-left: 32px;
     font-size: 14px;
+  }
+  .clip {
+    position: absolute;
+    right: 8px;
+    top: 9px;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 9px;
+    color: var(--fog);
+    border: 1px solid var(--line-strong);
+    pointer-events: none;
+  }
+  .urlrow input:has(+ .clip) {
+    padding-right: 112px;
+  }
+  .folderrow {
+    display: flex;
+    gap: 6px;
+  }
+  .folderrow input {
+    flex: 1;
+    min-width: 0;
+  }
+  .wide {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .probe {
     min-height: 22px;

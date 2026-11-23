@@ -7,6 +7,11 @@
   let s = $state<Settings>({ ...(app.settings as Settings) });
   let limitKb = $state(Math.round((app.settings?.speedLimit ?? 0) / 1024));
 
+  async function browse() {
+    const picked = await run(api.pickFolder(s.downloadDir));
+    if (picked) s.downloadDir = picked;
+  }
+
   async function save() {
     const next = { ...s, speedLimit: Math.max(0, Math.round(limitKb)) * 1024 };
     const ok = await run(api.setSettings(next).then(() => true));
@@ -24,10 +29,13 @@
     <button class="btn ghost" onclick={() => (app.panel = 'pass')} aria-label="Close settings"><Icon name="close" /></button>
   </header>
 
-  <label>
-    <span class="cap">Download folder</span>
-    <input class="field" bind:value={s.downloadDir} spellcheck="false" />
-  </label>
+  <div class="field-group">
+    <label class="cap" for="set-dir">Download folder</label>
+    <div class="folderrow">
+      <input id="set-dir" class="field" bind:value={s.downloadDir} spellcheck="false" />
+      <button class="btn" onclick={browse}><Icon name="folder" />Browse…</button>
+    </div>
+  </div>
   <label class="check">
     <input type="checkbox" bind:checked={s.categoryFolders} />
     <span>Sort into folders by type <em>(Video, Music, Programs…)</em></span>
@@ -94,6 +102,19 @@
     display: flex;
     flex-direction: column;
     gap: 5px;
+  }
+  .field-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .folderrow {
+    display: flex;
+    gap: 6px;
+  }
+  .folderrow input {
+    flex: 1;
+    min-width: 0;
   }
   .check {
     flex-direction: row;

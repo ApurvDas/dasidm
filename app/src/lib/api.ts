@@ -35,6 +35,8 @@ export const api = {
   setSettings: (settings: Settings) => invokeImpl<void>('set_settings', { settings }),
   openFile: (id: string) => invokeImpl<void>('open_file', { id }),
   openFolder: (id: string) => invokeImpl<void>('open_folder', { id }),
+  clipboardLink: () => invokeImpl<string | null>('clipboard_link'),
+  pickFolder: (start?: string | null) => invokeImpl<string | null>('pick_folder', { start: start || null }),
   listen: (cb: (e: CoreEvent) => void) => listenImpl(cb),
 };
 

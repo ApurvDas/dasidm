@@ -212,6 +212,11 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
       emit({ type: 'upsert', item: { ...it } });
       return it as T;
     }
+    case 'clipboard_link':
+      // ?clip=<url> previews the clipboard prefill.
+      return (new URLSearchParams(location.search).get('clip') || null) as T;
+    case 'pick_folder':
+      return 'D:\\Media\\Downloads' as T;
     case 'pause':
       set(args.ids, 'paused');
       return undefined as T;

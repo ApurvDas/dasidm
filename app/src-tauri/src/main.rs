@@ -106,6 +106,27 @@ fn open_folder(app: State<'_, App>, id: String) -> Res<()> {
     Ok(())
 }
 
+/// The first link on the clipboard, so Add URL can open prefilled.
+#[tauri::command]
+fn clipboard_link() -> Option<String> {
+    let text = arboard::Clipboard::new().ok()?.get_text().ok()?;
+    das_core::links::first_link(&text)
+}
+
+/// The native Windows folder picker, starting at `start` when it exists.
+#[tauri::command]
+async fn pick_folder(app: AppHandle, start: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file().set_title("Choose a folder");
+    if let Some(w) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&w);
+    }
+    if let Some(dir) = start.filter(|d| std::path::Path::new(d).is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.blocking_pick_folder()?.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -167,6 +188,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let start_hidden = args.iter().any(|a| a == "--background");
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A second launch hands its links to the running DasIDM.
             add_urls(app, &args);
@@ -188,7 +210,9 @@ fn main() {
             get_settings,
             set_settings,
             open_file,
-            open_folder
+            open_folder,
+            clipboard_link,
+            pick_folder
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

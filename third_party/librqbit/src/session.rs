@@ -70,7 +70,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
 use tokio_util::sync::{CancellationToken, DropGuard};
 use tracing::{Instrument, debug, debug_span, error, info, trace, warn};
-use tracker_comms::{TrackerComms, UdpTrackerClient};
+use tracker_comms::{TrackerComms, TrackerSet, UdpTrackerClient};
 
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http:", "https:", "magnet:"];
 
@@ -1241,11 +1241,13 @@ impl Session {
         } = add_res;
 
         let private = metadata.as_ref().is_some_and(|m| m.info.info().private);
+        // rqbit-patch: one live tracker list per torrent, kept for its whole life.
+        let tracker_set = self.make_tracker_set(trackers.clone(), private);
 
         let make_peer_rx = || {
             self.make_peer_rx(
                 info_hash,
-                trackers.clone(),
+                tracker_set.clone(),
                 !opts.paused && !opts.list_only,
                 opts.force_tracker_interval,
                 opts.initial_peers.clone().unwrap_or_default(),
@@ -1356,6 +1358,7 @@ impl Session {
                 span,
                 info_hash,
                 trackers: trackers.into_iter().collect(),
+                tracker_set,
                 spawner: self.spawner.clone(),
                 peer_id: self.peer_id,
                 storage_factory,
@@ -1530,7 +1533,7 @@ impl Session {
         let is_private = t.with_metadata(|m| m.info.info().private).unwrap_or(false);
         self.make_peer_rx(
             t.info_hash(),
-            t.shared().trackers.iter().cloned().collect(),
+            t.shared().tracker_set.clone(),
             announce,
             t.shared().options.force_tracker_interval,
             t.shared().options.initial_peers.clone(),
@@ -1538,11 +1541,26 @@ impl Session {
         )
     }
 
+    /// rqbit-patch: the torrent's trackers plus the session's, with the private-torrent rule.
+    fn make_tracker_set(&self, mut trackers: Vec<url::Url>, is_private: bool) -> Arc<TrackerSet> {
+        if is_private && trackers.len() > 1 {
+            warn!("private trackers are not fully implemented, so using only the first tracker");
+            trackers.truncate(1);
+        } else if !self.disable_trackers {
+            trackers.extend(self.trackers.iter().cloned());
+        }
+        let set = TrackerSet::new(trackers.into_iter().map(|u| (u, 0)));
+        if self.disable_trackers {
+            set.disable_all("Trackers are turned off");
+        }
+        set
+    }
+
     // Get a peer stream from both DHT and trackers.
     fn make_peer_rx(
         self: &Arc<Self>,
         info_hash: Id20,
-        mut trackers: Vec<url::Url>,
+        trackers: Arc<TrackerSet>,
         announce: bool,
         force_tracker_interval: Option<Duration>,
         initial_peers: Vec<SocketAddr>,
@@ -1564,34 +1582,24 @@ impl Session {
             })
         };
 
-        if self.disable_trackers {
-            trackers.clear();
-        }
-
-        if is_private && trackers.len() > 1 {
-            warn!(
-                ?info_hash,
-                "private trackers are not fully implemented, so using only the first tracker"
-            );
-            trackers.truncate(1);
-        } else if !self.disable_trackers {
-            trackers.extend(self.trackers.iter().cloned());
-        }
-
         let tracker_rx_stats = PeerRxTorrentInfo {
             info_hash,
             session: self.clone(),
         };
-        let tracker_rx = TrackerComms::start(
-            info_hash,
-            self.peer_id,
-            trackers.into_iter().collect(),
-            Box::new(tracker_rx_stats),
-            force_tracker_interval,
-            self.announce_port().unwrap_or(4240),
-            self.reqwest_client.clone(),
-            self.udp_tracker_client.clone(),
-        );
+        let tracker_rx = if self.disable_trackers {
+            None
+        } else {
+            TrackerComms::start(
+                info_hash,
+                self.peer_id,
+                trackers,
+                Box::new(tracker_rx_stats),
+                force_tracker_interval,
+                self.announce_port().unwrap_or(4240),
+                self.reqwest_client.clone(),
+                self.udp_tracker_client.clone(),
+            )
+        };
 
         let initial_peers_rx = if initial_peers.is_empty() {
             None

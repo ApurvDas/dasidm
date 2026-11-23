@@ -101,6 +101,8 @@ pub use torrent_state::{
     TorrentStatsState,
 };
 pub use type_aliases::FileInfos;
+// rqbit-patch: editable trackers with live status.
+pub use tracker_comms::{TrackerSet, TrackerState, TrackerStatus};
 
 pub use buffers::*;
 pub use clone_to_owned::CloneToOwned;

@@ -184,6 +184,8 @@ pub struct ManagedTorrentShared {
     pub info_hash: Id20,
     pub(crate) spawner: BlockingSpawner,
     pub trackers: HashSet<url::Url>,
+    /// rqbit-patch: the live tracker list (add, remove, replace, reannounce, status).
+    pub tracker_set: std::sync::Arc<tracker_comms::TrackerSet>,
     pub peer_id: Id20,
     pub span: tracing::Span,
     pub(crate) options: ManagedTorrentOptions,

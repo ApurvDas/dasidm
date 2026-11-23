@@ -71,6 +71,10 @@
       case 'downloading': {
         const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size);
         if (p?.phase && isPostPhase(p.phase)) return `${PHASE[p.phase]}…`;
+        if (i.kind === 'torrent') {
+          if (p?.torrent?.checking) return `Checking pieces · ${pc ?? 0}%`;
+          return `${pc ?? '··'}% · ${speed(p?.speed)} · ${p?.torrent?.peers ?? 0} peers`;
+        }
         return `${pc ?? '··'}% · ${speed(p?.speed)}`;
       }
       case 'queued':
@@ -82,6 +86,7 @@
       case 'failed':
         return i.error ?? 'Failed';
       case 'done':
+        if (i.torrent?.seeding) return `Seeding · ↑ ${speed(p?.torrent?.upSpeed)} · ratio ${i.torrent.ratio.toFixed(2)}`;
         return `Finished ${when(i.finishedAt)}`;
     }
   }

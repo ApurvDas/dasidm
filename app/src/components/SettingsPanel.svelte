@@ -6,6 +6,16 @@
 
   let s = $state<Settings>({ ...(app.settings as Settings) });
   let limitKb = $state(Math.round((app.settings?.speedLimit ?? 0) / 1024));
+  let upKb = $state(Math.round((app.settings?.uploadLimit ?? 0) / 1024));
+  const restartNeeded = $derived(
+    !!app.settings &&
+      (s.torrentPort !== app.settings.torrentPort || s.torrentUpnp !== app.settings.torrentUpnp || s.torrentDht !== app.settings.torrentDht),
+  );
+
+  async function registerHandler() {
+    const ok = await run(api.registerTorrentHandler().then(() => true));
+    if (ok) toast('Magnet links and .torrent files now open in DasIDM');
+  }
 
   async function browse() {
     const picked = await run(api.pickFolder(s.downloadDir));
@@ -13,7 +23,14 @@
   }
 
   async function save() {
-    const next = { ...s, speedLimit: Math.max(0, Math.round(limitKb)) * 1024 };
+    const next = {
+      ...s,
+      speedLimit: Math.max(0, Math.round(limitKb)) * 1024,
+      uploadLimit: Math.max(0, Math.round(upKb)) * 1024,
+      torrentPort: Math.min(65535, Math.max(1024, Math.round(s.torrentPort))),
+      seedRatio: Math.max(0, Number(s.seedRatio) || 0),
+      seedMinutes: Math.max(0, Math.round(s.seedMinutes)),
+    };
     const ok = await run(api.setSettings(next).then(() => true));
     if (ok) {
       app.settings = next;
@@ -66,6 +83,39 @@
     <input type="checkbox" bind:checked={s.closeToTray} />
     <span>Keep downloading in the tray when the window closes <em>(the window is unloaded to save memory)</em></span>
   </label>
+
+  <h4>Torrents</h4>
+  <div class="two">
+    <label>
+      <span class="cap">Seed until ratio</span>
+      <input class="field" type="number" min="0" step="0.1" bind:value={s.seedRatio} />
+    </label>
+    <label>
+      <span class="cap">Or minutes</span>
+      <input class="field" type="number" min="0" step="10" bind:value={s.seedMinutes} />
+    </label>
+  </div>
+  <span class="hint under">Finished torrents upload to others until either limit is reached. 0 means no limit.</span>
+  <label>
+    <span class="cap">Upload limit, KB/s</span>
+    <input class="field" type="number" min="0" step="64" bind:value={upKb} />
+  </label>
+  <label>
+    <span class="cap">Trackers for every new torrent</span>
+    <textarea class="field area" rows="3" spellcheck="false" bind:value={s.defaultTrackers} placeholder="One per line: udp://…, https://…"></textarea>
+  </label>
+  <div class="two">
+    <label>
+      <span class="cap">Incoming port</span>
+      <input class="field" type="number" min="1024" max="65535" bind:value={s.torrentPort} />
+    </label>
+    <div class="checks">
+      <label class="check"><input type="checkbox" bind:checked={s.torrentUpnp} /><span>Open the port on the router <em>(UPnP)</em></span></label>
+      <label class="check"><input type="checkbox" bind:checked={s.torrentDht} /><span>Find peers without trackers <em>(DHT)</em></span></label>
+    </div>
+  </div>
+  {#if restartNeeded}<span class="hint under">Port, UPnP and DHT changes apply the next time DasIDM starts.</span>{/if}
+  <button class="btn" onclick={registerHandler}><Icon name="type-torrents" />Use DasIDM for magnets and .torrent files</button>
 
   <div class="foot">
     <button class="btn ghost" onclick={() => (app.panel = 'pass')}>Cancel</button>
@@ -138,6 +188,34 @@
   }
   .hint {
     color: var(--fog);
+    font-size: 12px;
+  }
+  h4 {
+    margin-top: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .under {
+    margin-top: -8px;
+  }
+  .checks {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+  .area {
+    height: auto;
+    resize: vertical;
+    padding: 8px 10px;
+    font-family: var(--mono);
+    font-stretch: 75%;
     font-size: 12px;
   }
   .foot {

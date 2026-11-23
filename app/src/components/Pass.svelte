@@ -5,6 +5,7 @@
   import Icon from '../lib/Icon.svelte';
   import { CATEGORIES, category, typeIcon } from '../lib/types';
   import PartsMap from './PartsMap.svelte';
+  import PieceMap from './PieceMap.svelte';
   import { thumbOf } from '../lib/state.svelte';
   import { PHASE, mediaLine } from '../lib/media';
   import { clock } from '../lib/format';
@@ -14,6 +15,8 @@
   const size = $derived(p?.size ?? item?.size ?? null);
   const loaded = $derived(p?.downloaded ?? item?.downloaded ?? 0);
   const pc = $derived(percent(loaded, size));
+  const tl = $derived(p?.torrent);
+  const isTorrent = $derived(item?.kind === 'torrent');
   const seq = $derived(item ? String(Object.values(app.items).filter((i) => i.addedAt <= item.addedAt).length).padStart(4, '0') : '');
   const catName = $derived(CATEGORIES.find((c) => c.id === item?.category)?.name ?? 'Other');
   const ext = $derived(item?.fileName.match(/\.([a-z0-9]{1,6})$/i)?.[1].toUpperCase() ?? '');
@@ -65,8 +68,13 @@
       <!-- The route line: where it comes from and where it lands, like SFO → ORD. -->
       <div class="route">
         <div class="end">
-          <b class="code" title={item.url}>{sourceCode(item.url)}</b>
-          <span class="lbl full" title={item.url}>From {host(item.url)}</span>
+          {#if isTorrent}
+            <b class="code" title="Peers in the swarm">SWARM</b>
+            <span class="lbl full">From {tl ? `${tl.peers} peers · ${tl.seeds} seeds` : 'peers'}</span>
+          {:else}
+            <b class="code" title={item.url}>{sourceCode(item.url)}</b>
+            <span class="lbl full" title={item.url}>From {host(item.url)}</span>
+          {/if}
         </div>
         <span class="arrow" aria-hidden="true"><Icon name="right" size={18} /></span>
         <div class="end to">
@@ -96,23 +104,34 @@
             <b>—</b>
           {/if}
         </div>
-        {#if item.media}
+        {#if isTorrent}
+          <div><span class="lbl">Peers</span><b>{tl?.peers ?? '—'}</b><span class="sub">{tl?.seeds ?? 0} seeds</span></div>
+        {:else if item.media}
           <div><span class="lbl">Quality</span><b>{item.media.audioOnly ? item.media.format : item.media.quality}</b></div>
         {:else}
           <div><span class="lbl">Lines</span><b>{item.status === 'downloading' ? (p?.activeConnections ?? 0) : '—'}<span class="sub"> / {item.connections}</span></b></div>
         {/if}
-        <div><span class="lbl">Resume</span><b>{item.resumable || item.status === 'done' ? 'Yes' : 'No'}</b></div>
+        {#if isTorrent}
+          <div><span class="lbl">Ratio</span><b>{(item.torrent?.ratio ?? 0).toFixed(2)}</b><span class="sub">↑ {tl?.upSpeed ? speed(tl.upSpeed) : bytes(item.torrent?.uploaded ?? 0)}</span></div>
+        {:else}
+          <div><span class="lbl">Resume</span><b>{item.resumable || item.status === 'done' ? 'Yes' : 'No'}</b></div>
+        {/if}
       </div>
 
       <div class="scan">
-        {#if item.status === 'done'}
+        {#if isTorrent && item.status !== 'done'}
+          <PieceMap pieces={tl?.pieces} fallback={size ? loaded / size : 0} tone="paper" height={56} />
+        {:else if item.status === 'done'}
           <div class="complete" aria-label="All parts on disk"></div>
         {:else}
           <PartsMap {p} fallback={size ? loaded / size : 0} tone="paper" height={56} />
         {/if}
         <div class="scanfoot">
           <span class="lbl">
-            {#if item.status === 'done'}
+            {#if isTorrent}
+              {item.torrent?.seeding ? 'Seeding · ' : ''}{item.torrent?.chosenFiles ?? item.torrent?.files ?? 0} of {item.torrent?.files ?? 0}
+              {item.torrent?.files === 1 ? 'file' : 'files'}{tl?.checking ? ' · checking pieces' : ''}
+            {:else if item.status === 'done'}
               {catName} · all parts arrived
             {:else if item.status === 'downloading' && p?.phase}
               {catName} · {PHASE[p.phase]}
@@ -122,7 +141,9 @@
               {catName} · {pc ?? 0}% on disk
             {/if}
           </span>
-          {#if item.status === 'downloading' && item.kind !== 'video'}
+          {#if isTorrent}
+            <button class="partsbtn" onclick={() => (app.partsOpen = true)}>Open torrent<kbd>P</kbd></button>
+          {:else if item.status === 'downloading' && item.kind !== 'video'}
             <button class="partsbtn" onclick={() => (app.partsOpen = true)}>Open parts<kbd>P</kbd></button>
           {/if}
         </div>
@@ -138,10 +159,19 @@
         <button class="btn" onclick={() => act(() => api.pause([item.id]))}><Icon name="pause" />Pause<kbd>Space</kbd></button>
       {:else if item.status === 'paused' || item.status === 'failed'}
         <button class="btn primary" onclick={() => act(() => api.resume([item.id]))}><Icon name="play" />{item.status === 'failed' ? 'Retry' : 'Resume'}<kbd>Space</kbd></button>
-        <button class="btn" onclick={() => act(() => api.restart([item.id]))}><Icon name="restart" />Start over</button>
+        {#if !isTorrent}
+          <button class="btn" onclick={() => act(() => api.restart([item.id]))}><Icon name="restart" />Start over</button>
+        {/if}
       {/if}
       {#if item.status === 'done'}
         <button class="btn primary" onclick={() => act(() => api.openFile(item.id))}><Icon name="open" />Open<kbd>Enter</kbd></button>
+        {#if isTorrent}
+          {#if item.torrent?.seeding}
+            <button class="btn" onclick={() => act(() => api.pause([item.id]))}><Icon name="pause" />Stop seeding</button>
+          {:else}
+            <button class="btn" onclick={() => act(() => api.seed([item.id]))}><Icon name="upload" />Seed</button>
+          {/if}
+        {/if}
       {/if}
       <button class="btn" onclick={() => act(() => api.openFolder(item.id))}><Icon name="folder" />Show in folder</button>
       <button class="btn ghost danger" onclick={() => (app.confirmDelete = true)}><Icon name="trash" />Remove<kbd>Del</kbd></button>

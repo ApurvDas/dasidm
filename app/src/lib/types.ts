@@ -15,10 +15,80 @@ export interface ItemView {
   error: string | null;
   connections: number;
   resumable: boolean;
-  kind: 'http' | 'video';
+  kind: 'http' | 'video' | 'torrent';
   /** Video and music links: what was chosen. */
   media: MediaView | null;
+  torrent: TorrentView | null;
 }
+
+export interface TorrentView {
+  infoHash: string;
+  files: number;
+  /** How many files are chosen; null = all. */
+  chosenFiles: number | null;
+  private: boolean;
+  uploaded: number;
+  ratio: number;
+  seeding: boolean;
+}
+
+export interface TorrentLive {
+  upSpeed: number;
+  uploaded: number;
+  peers: number;
+  seeds: number;
+  knownPeers: number;
+  checking: boolean;
+  seeding: boolean;
+  /** Verified share of each stretch of the torrent, 0..1. */
+  pieces: number[];
+}
+
+export interface TorrentFile {
+  index: number;
+  /** Path inside the torrent, folders separated by \ */
+  path: string;
+  size: number;
+  done: number;
+}
+
+export interface TorrentPreview {
+  infoHash: string;
+  name: string;
+  size: number;
+  files: TorrentFile[];
+  trackers: string[];
+  private: boolean;
+  pieceSize: number;
+  pieces: number;
+}
+
+export type TrackerState = 'notContacted' | 'updating' | 'working' | 'notWorking' | 'disabled';
+
+export interface TrackerView {
+  url: string;
+  tier: number;
+  state: TrackerState;
+  seeders: number | null;
+  leechers: number | null;
+  /** Peers this tracker handed out. */
+  peers: number;
+  lastAnnounce: number | null;
+  nextAnnounce: number | null;
+  message: string | null;
+}
+
+export interface AddTorrentRequest {
+  infoHash: string;
+  onlyFiles?: number[] | null;
+  extraTrackers: string[];
+  saveDir?: string | null;
+  start: boolean;
+}
+
+/** magnet: links, links to .torrent files, and local .torrent paths. */
+export const isTorrentLink = (s: string) => /^magnet:\?/i.test(s.trim()) || /\.torrent(\?.*)?$/i.test(s.trim());
+export const isLocalPath = (s: string) => /^[a-z]:\\/i.test(s.trim()) || s.trim().startsWith('\\\\');
 
 export interface MediaView {
   title: string;
@@ -54,6 +124,8 @@ export interface Progress {
   fileName: string;
   /** Video jobs only. */
   phase?: VideoPhase | null;
+  /** Torrents only. */
+  torrent?: TorrentLive | null;
 }
 
 export interface PartView {
@@ -80,6 +152,13 @@ export interface Settings {
   closeToTray: boolean;
   notifyOnComplete: boolean;
   startWithWindows: boolean;
+  torrentPort: number;
+  torrentUpnp: boolean;
+  torrentDht: boolean;
+  uploadLimit: number;
+  seedRatio: number;
+  seedMinutes: number;
+  defaultTrackers: string;
 }
 
 export interface ProbeInfo {

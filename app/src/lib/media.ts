@@ -28,5 +28,20 @@ export function mediaLine(i: ItemView): string | null {
   return len ? `${q} · ${len}` : q;
 }
 
+const EXT: [string, RegExp][] = [
+  ['video', /\.(mp4|mkv|webm|avi|mov|m4v|wmv|flv|ts|m2ts)$/i],
+  ['music', /\.(mp3|flac|m4a|aac|ogg|opus|wav|wma|alac|ape)$/i],
+  ['programs', /\.(exe|msi|msix|appx|bat|cmd)$/i],
+  ['archives', /\.(zip|rar|7z|tar|gz|bz2|xz|zst)$/i],
+  ['discs', /\.(iso|img|vhd|vhdx|dmg)$/i],
+  ['documents', /\.(pdf|docx?|xlsx?|pptx?|txt|md|epub|csv|nfo)$/i],
+  ['images', /\.(jpe?g|png|gif|webp|bmp|tiff?|heic|svg)$/i],
+  ['torrents', /\.torrent$/i],
+];
+/** The file type of a name, by extension (the core does the same for downloads). */
+export function categorize(name: string): string {
+  return EXT.find(([, re]) => re.test(name))?.[0] ?? 'other';
+}
+
 /** After the streams arrive, yt-dlp joins or converts them; the bytes are all there by then. */
 export const isPostPhase = (p: VideoPhase | null | undefined) => p === 'merging' || p === 'converting' || p === 'finishing';

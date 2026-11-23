@@ -8,6 +8,7 @@
   import AddSheet from './components/AddSheet.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import PartsView from './components/PartsView.svelte';
+  import TorrentView from './components/TorrentView.svelte';
   import { api, inTauri } from './lib/api';
   import { app, init, run, select } from './lib/state.svelte';
 
@@ -47,7 +48,7 @@
   function onPaste(e: ClipboardEvent) {
     if (typing(e.target) || app.adding) return;
     const text = e.clipboardData?.getData('text')?.trim() ?? '';
-    if (/^https?:\/\/\S+$/i.test(text)) {
+    if (/^https?:\/\/\S+$/i.test(text) || /^magnet:\?/i.test(text)) {
       e.preventDefault();
       app.adding = text;
     }
@@ -96,7 +97,11 @@
       <Board />
       <Hall bind:this={hall} />
       {#if app.partsOpen && app.selected}
-        <PartsView />
+        {#if app.items[app.selected]?.kind === 'torrent'}
+          <TorrentView />
+        {:else}
+          <PartsView />
+        {/if}
       {/if}
     </div>
     {#if app.panel === 'settings' && app.settings}
@@ -133,7 +138,7 @@
     min-height: 0;
   }
   /* The parts view takes the board's and list's place; they stay mounted but unseen. */
-  .left.covered > :global(:not(.parts)) {
+  .left.covered > :global(:not(.parts, .tview)) {
     visibility: hidden;
   }
   .left {

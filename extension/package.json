@@ -1,0 +1,14 @@
+{
+  "name": "dasidm-extension",
+  "private": true,
+  "description": "DasIDM's browser extensions. Firefox: lint, test and sign (unlisted) with Mozilla's web-ext.",
+  "scripts": {
+    "test": "node --test firefox",
+    "lint": "web-ext lint --source-dir firefox --ignore-files rules.test.mjs",
+    "pack": "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1",
+    "sign": "powershell -NoProfile -ExecutionPolicy Bypass -File sign.ps1"
+  },
+  "devDependencies": {
+    "web-ext": "10.8.0"
+  }
+}

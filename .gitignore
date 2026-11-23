@@ -5,3 +5,5 @@ app/src-tauri/gen/
 .impeccable/questions/
 .impeccable/reference/
 extension/dist/
+extension/node_modules/
+extension/firefox/.amo-upload-uuid

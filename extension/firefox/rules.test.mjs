@@ -23,6 +23,13 @@ test('anything sent as an attachment is grabbed, even a type Firefox could show'
   assert.equal(ok({ contentType: 'application/pdf', disposition: 'inline; filename="a.pdf"' }).grab, false);
 });
 
+test('Firefox add-ons stay with Firefox, even as attachments', () => {
+  assert.equal(ok({ contentType: 'application/x-xpinstall' }).grab, false);
+  assert.equal(ok({ contentType: 'application/x-xpinstall', disposition: 'attachment; filename="dasidm-0.3.0.xpi"' }).grab, false);
+  assert.equal(ok({ url: 'https://addons.mozilla.org/firefox/downloads/file/1/dasidm-0.3.0.xpi', contentType: 'application/octet-stream' }).grab, false);
+  assert.equal(ok({ url: 'https://example.org/xpi-guide.zip', contentType: 'application/zip' }).grab, true);
+});
+
 test('switches and limits', () => {
   assert.equal(ok({ contentType: 'application/zip' }, { ...on, enabled: false }).grab, false);
   assert.equal(ok({ contentType: 'application/zip', incognito: true }).grab, false);

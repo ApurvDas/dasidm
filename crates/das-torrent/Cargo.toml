@@ -1,0 +1,8 @@
+[package]
+name = "das-torrent"
+version = "0.1.0"
+edition = "2024"
+description = "DasIDM torrents: a lazy librqbit session with editable trackers"
+
+[dependencies]
+librqbit = { version = "9.1.0", default-features = false, features = ["default-tls"] }

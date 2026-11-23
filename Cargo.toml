@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/das-engine", "crates/das-core", "app/src-tauri"]
+members = ["crates/das-engine", "crates/das-core", "crates/das-torrent", "app/src-tauri"]
+exclude = ["third_party"]
+
+# Patched copies (see third_party/NOTICE.md).
+[patch.crates-io]
+librqbit = { path = "third_party/librqbit" }
+librqbit-tracker-comms = { path = "third_party/librqbit-tracker-comms" }
 
 [profile.release]
 lto = "fat"

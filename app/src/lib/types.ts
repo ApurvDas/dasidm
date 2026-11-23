@@ -89,15 +89,20 @@ export type CoreEvent =
   | { type: 'progress'; items: Progress[]; totals: Totals }
   | { type: 'completed'; item: ItemView };
 
-export const CATEGORIES: { id: string; name: string }[] = [
-  { id: 'video', name: 'Video' },
-  { id: 'music', name: 'Music' },
-  { id: 'programs', name: 'Programs' },
-  { id: 'archives', name: 'Archives' },
-  { id: 'discs', name: 'Disc images' },
-  { id: 'documents', name: 'Documents' },
-  { id: 'images', name: 'Images' },
-  { id: 'torrents', name: 'Torrents' },
-  { id: 'web', name: 'Web pages' },
-  { id: 'other', name: 'Other' },
+/** File types. `short` is the list's Type column; `name` is the chip and the pass. */
+export const CATEGORIES: { id: string; name: string; short: string }[] = [
+  { id: 'video', name: 'Video', short: 'Video' },
+  { id: 'music', name: 'Music', short: 'Music' },
+  { id: 'programs', name: 'Programs', short: 'Program' },
+  { id: 'archives', name: 'Archives', short: 'Archive' },
+  { id: 'discs', name: 'Disc images', short: 'Disc image' },
+  { id: 'documents', name: 'Documents', short: 'Document' },
+  { id: 'images', name: 'Images', short: 'Image' },
+  { id: 'torrents', name: 'Torrents', short: 'Torrent' },
+  { id: 'web', name: 'Web pages', short: 'Web page' },
+  { id: 'other', name: 'Other', short: 'Other' },
 ];
+
+export const category = (id: string | null | undefined) => CATEGORIES.find((c) => c.id === id) ?? CATEGORIES[CATEGORIES.length - 1];
+/** The icon name for a file type. */
+export const typeIcon = (id: string | null | undefined) => `type-${category(id).id}`;

@@ -2,7 +2,7 @@ import { api } from './api';
 import type { CoreEvent, ItemView, Progress, Settings, Status, Totals } from './types';
 
 export type Filter = 'all' | 'active' | 'queued' | 'paused' | 'done' | 'failed';
-export type SortKey = 'name' | 'size' | 'status' | 'added';
+export type SortKey = 'name' | 'type' | 'size' | 'status' | 'added';
 
 const HISTORY = 240; // 60 s at 4 Hz
 

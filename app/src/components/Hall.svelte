@@ -4,7 +4,7 @@
   import Mark from '../lib/Mark.svelte';
   import SegStrip from '../lib/SegStrip.svelte';
   import Icon from '../lib/Icon.svelte';
-  import { CATEGORIES, type ItemView } from '../lib/types';
+  import { CATEGORIES, category, typeIcon, type ItemView } from '../lib/types';
 
   const ROW = 34;
   let viewport = $state<HTMLDivElement>();
@@ -19,14 +19,32 @@
 
   const statusOrder = { downloading: 0, queued: 1, paused: 2, failed: 3, done: 4 } as const;
 
-  const rows = $derived.by(() => {
+  // Everything the status tab and search allow; the type chips count within this.
+  const scoped = $derived.by(() => {
     const q = app.search.trim().toLowerCase();
-    const list = Object.values(app.items).filter(
-      (i) =>
-        matchesFilter(i.status, app.filter) &&
-        (app.category === 'all' || i.category === app.category) &&
-        (!q || i.fileName.toLowerCase().includes(q) || i.url.toLowerCase().includes(q)),
+    return Object.values(app.items).filter(
+      (i) => matchesFilter(i.status, app.filter) && (!q || i.fileName.toLowerCase().includes(q) || i.url.toLowerCase().includes(q)),
     );
+  });
+
+  /** Type chips: only types that are present (plus the chosen one), in a fixed order. */
+  const chips = $derived.by(() => {
+    const n: Record<string, number> = {};
+    for (const i of scoped) {
+      const id = category(i.category).id;
+      n[id] = (n[id] ?? 0) + 1;
+    }
+    return CATEGORIES.filter((c) => n[c.id] || app.category === c.id).map((c) => ({ ...c, count: n[c.id] ?? 0 }));
+  });
+
+  const CHIP: Record<string, string> = { discs: 'Discs', documents: 'Docs', web: 'Pages' };
+  // Chips show their words whenever they all fit; otherwise only the chosen chip keeps its word.
+  let chipsRoom = $state(0);
+  let chipsNeed = $state(0);
+  const compact = $derived(chipsNeed > chipsRoom + 1);
+
+  const rows = $derived.by(() => {
+    const list = scoped.filter((i) => app.category === 'all' || category(i.category).id === app.category);
     const { key, desc } = app.sort;
     const dir = desc ? -1 : 1;
     const cmp: Record<SortKey, (a: ItemView, b: ItemView) => number> = {
@@ -34,6 +52,7 @@
       size: (a, b) => (a.size ?? -1) - (b.size ?? -1),
       status: (a, b) => statusOrder[a.status] - statusOrder[b.status],
       added: (a, b) => a.addedAt - b.addedAt,
+      type: (a, b) => CATEGORIES.indexOf(category(a.category)) - CATEGORIES.indexOf(category(b.category)),
     };
     return list.sort((a, b) => cmp[key](a, b) * dir || b.addedAt - a.addedAt);
   });
@@ -95,17 +114,25 @@
       <input bind:this={searchEl} class="field" placeholder="Search names and links" bind:value={app.search} spellcheck="false" />
       <kbd>Ctrl F</kbd>
     </label>
-    <select class="field cat" bind:value={app.category} aria-label="Category">
-      <option value="all">All types</option>
-      {#each CATEGORIES as c}
-        <option value={c.id}>{c.name}</option>
+    <div class="chips" class:compact role="group" aria-label="File type" bind:clientWidth={chipsRoom}>
+      {#each [false, true] as ghost}
+        <!-- The ghost row is never seen: it measures the chips with every word shown. -->
+        <div class="row" class:ghost bind:clientWidth={null, (w) => ghost && (chipsNeed = w)} aria-hidden={ghost} inert={ghost}>
+          <button class="chip" class:on={app.category === 'all'} aria-pressed={app.category === 'all'} onclick={() => (app.category = 'all')}>
+            <span class="cl">All</span><span class="n">{scoped.length}</span>
+          </button>
+          {#each chips as c (c.id)}
+            <button class="chip" class:on={app.category === c.id} aria-pressed={app.category === c.id} aria-label="{c.name} ({c.count})" title={c.name} onclick={() => (app.category = app.category === c.id ? 'all' : c.id)}>
+              <Icon name="type-{c.id}" size={14} /><span class="cl">{CHIP[c.id] ?? c.name}</span><span class="n">{c.count}</span>
+            </button>
+          {/each}
+        </div>
       {/each}
-    </select>
-    <span class="cap count">{rows.length} {rows.length === 1 ? 'item' : 'items'}</span>
+    </div>
   </div>
 
   <div class="thead cap" role="row">
-    {#each [['name', 'Name'], ['size', 'Size'], ['status', 'Status'], ['added', 'Added']] as [k, label]}
+    {#each [['name', 'Name'], ['type', 'Type'], ['size', 'Size'], ['status', 'Status'], ['added', 'Added']] as [k, label]}
       <span role="columnheader" class:r={k === 'size'} aria-sort={app.sort.key === k ? (app.sort.desc ? 'descending' : 'ascending') : 'none'}>
         <button onclick={() => sortBy(k as SortKey)}>
           {label}
@@ -145,6 +172,7 @@
             <Mark status={i.status} />
             <span class="text" title={i.fileName}>{i.fileName}</span>
           </span>
+          <span class="type" title={category(i.category).name}><Icon name={typeIcon(i.category)} size={14} /><span class="tl">{category(i.category).short}</span></span>
           <span class="r">{bytes(p?.size ?? i.size)}</span>
           <span class="st">
             {#if i.status === 'downloading' || i.status === 'paused'}
@@ -190,8 +218,8 @@
   }
   .search {
     position: relative;
-    flex: 1;
-    max-width: 420px;
+    flex: 0 1 240px;
+    min-width: 170px;
     color: var(--fog);
   }
   .search :global(svg) {
@@ -217,17 +245,73 @@
     border: 1px solid var(--line-strong);
     color: var(--fog);
   }
-  .cat {
-    width: 150px;
+  .chips {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
   }
-  .count {
-    margin-left: auto;
+  .row {
+    display: flex;
+    gap: 2px;
+    width: max-content;
+  }
+  .row.ghost {
+    position: absolute;
+    top: 0;
+    left: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .chip {
+    flex: none;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fog);
+    font-weight: 600;
+    transition: background 120ms var(--ease), color 120ms var(--ease);
+  }
+  .chip:hover {
+    color: var(--ivory);
+    background: var(--hover);
+  }
+  .chip.on {
+    color: var(--ivory);
+    background: rgb(255 255 255 / 0.09);
+  }
+  .chip .n {
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-size: 11px;
+    color: var(--fog);
+  }
+  .type {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: var(--fog);
+  }
+  .type :global(svg) {
+    flex: none;
+  }
+  .tl {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tr.sel .type {
+    color: var(--ivory);
   }
 
   .thead,
   .tr {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 90px minmax(200px, 0.55fr) 130px;
+    grid-template-columns: minmax(0, 1fr) 100px 90px minmax(200px, 0.55fr) 130px;
     column-gap: 16px;
     align-items: center;
     padding: 0 14px;
@@ -356,16 +440,20 @@
   @container (max-width: 720px) {
     .thead,
     .tr {
-      grid-template-columns: minmax(0, 1fr) 76px minmax(130px, 0.6fr);
+      grid-template-columns: minmax(0, 1fr) 16px 76px minmax(130px, 0.6fr);
       column-gap: 12px;
     }
-    .thead > :nth-child(4),
+    .thead > :nth-child(5),
     .added,
-    .mini {
+    .mini,
+    .type .tl {
       display: none;
     }
-    .cat {
-      width: 120px;
+    .thead > :nth-child(2) button {
+      visibility: hidden;
     }
+  }
+  .compact .row:not(.ghost) .chip:not(.on) .cl {
+    display: none;
   }
 </style>

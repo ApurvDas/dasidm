@@ -3,7 +3,7 @@
   import { app, run } from '../lib/state.svelte';
   import { bytes, doneAt, duration, host, percent, speed, when } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
-  import { CATEGORIES } from '../lib/types';
+  import { CATEGORIES, category, typeIcon } from '../lib/types';
   import PartsMap from './PartsMap.svelte';
 
   const item = $derived(app.selected ? app.items[app.selected] : null);
@@ -13,6 +13,7 @@
   const pc = $derived(percent(loaded, size));
   const seq = $derived(item ? String(Object.values(app.items).filter((i) => i.addedAt <= item.addedAt).length).padStart(4, '0') : '');
   const catName = $derived(CATEGORIES.find((c) => c.id === item?.category)?.name ?? 'Other');
+  const ext = $derived(item?.fileName.match(/\.([a-z0-9]{1,6})$/i)?.[1].toUpperCase() ?? '');
 
 
   /** Short source code for the route line, like an airport code: releases.ubuntu.com -> UBUNTU. */
@@ -38,6 +39,7 @@
       <header>
         <div>
           <h3 title={item.fileName}>{item.fileName.replace(/([_.\-])/g, '$1​')}</h3>
+          <span class="kind"><Icon name={typeIcon(item.category)} size={14} />{category(item.category).short}{#if ext}<span class="ext">{ext}</span>{/if}</span>
         </div>
         <div class="seq">
           <span class="lbl">Seq</span>
@@ -246,6 +248,29 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .kind {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #3b4148;
+  }
+  .kind :global(svg) {
+    flex: none;
+  }
+  .ext {
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid #b9b9b1;
+    color: #565d65;
   }
   .lbl {
     font-family: var(--mono);

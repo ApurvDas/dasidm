@@ -22,13 +22,21 @@ A personal download manager for Windows, written from scratch in Rust (engine + 
 - **Browse…** opens the Windows folder picker for the Add sheet's folder and Settings' download folder.
 - **File types told apart:** an icon per type (video, music, program, archive, disc image, document, image, torrent, web page, other), a sortable Type column, type chips with counts above the list, and for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`), channel and real thumbnail on the pass. Types come from the extension, or the server's Content-Type when the name has none.
 
+## What works (v0.2.0): torrents
+
+- **Magnet links, .torrent links and .torrent files** (Add URL, `Ctrl+V`, **Open .torrent…**, drag a file onto the window, or `dasidm.exe <magnet or file>`). DasIDM reads the file list first; choose which files to fetch and add extra trackers. Many-file torrents get their own folder.
+- **qBittorrent-style editable trackers** while a torrent runs: each tracker's status (Working, Not working with the reason, Updating, Not contacted, Disabled), tier, seeds, peers, peers received and next announce; add, edit, remove, **Ask all now**, copy all. Edits survive restarts. This needed a small patch to librqbit (see `third_party/NOTICE.md`).
+- **Files** can be included or skipped while the torrent runs; a **piece map** shows what is verified.
+- **Seeding** after the download, until a ratio or time limit (Settings); **Stop seeding** / **Seed** on finished torrents. Upload limit, a default tracker list for every new torrent, a fixed incoming port with UPnP, DHT on or off, and "Use DasIDM for magnets and .torrent files" (this Windows user only).
+- **Low idle RAM still holds:** the BitTorrent session starts only while a torrent is downloading or seeding.
+
 Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause/resume · `Enter` open · `P` parts view · `Del` remove · `Ctrl+F` search · `↑ ↓` move.
 
 Add from the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`. A video link given this way opens the quality picker.
 
 ## Coming next (agreed phases)
 
-Torrents and magnets with editable trackers (plan in `docs/plans/torrents.md`), browser capture extension, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
+Browser capture extension, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
 
 ## Build and run
 

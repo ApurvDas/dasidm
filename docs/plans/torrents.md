@@ -1,4 +1,4 @@
-# Phase 2a: torrents with qBittorrent-style editable trackers (planned, not started)
+# Phase 2a: torrents with qBittorrent-style editable trackers (built in v0.2.0)
 
 **Research (librqbit 9.1.0, Apache-2.0):** it has magnets, .torrent files and URLs, DHT, file selection (`only_files`, plus `update_only_files` live), pause/unpause/delete, fast-resume with JSON persistence, and live session limits (`Session.ratelimits.set_*_bps`). It has **no runtime tracker API** (`ManagedTorrentShared.trackers` is a frozen `HashSet<Url>`) and **no per-tracker status**. Decision: **patch the library**.
 

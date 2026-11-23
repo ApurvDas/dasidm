@@ -387,6 +387,15 @@ The selected item as an ivory boarding pass on the glass: header band with the f
 ### Parts View (signature)
 A departures board for one file: header figures, a 64px file map (ivory loaded, Map Hole missing, each live part a framed band with its number and a yellow head), and one 38px row per live connection in file order (part numeral, byte range in one unit, an 8px track with an ivory fill ending in a yellow edge, done %, speed). When a fast line takes half of a slow part, the map drops a yellow cut and flash and the new row opens reading "SPLIT FROM #NN" in a yellow badge; finished rows hold one beat at 100%, then close up.
 
+### Torrent View (signature)
+The Parts View's sibling for a torrent (opened the same way, `P`): header figures for peers · seeds, down, up, ratio and done-at, then three tabs in the filter-tab pattern with condensed-mono counts. **Trackers** is a 40px-row table: a status dot and word (ok green Working, bad red Not working, a pulsing ivory dot while Updating, steel for Not contacted and Disabled), the address in condensed mono with the reason under it, tier, seeds, peers, peers received and next announce. A failing tracker gets a 7% red ground and a 3px red left rule (failure is not change, so it is not yellow). A first fog row explains the trackerless sources (DHT, peer exchange, local network). Rows edit in place (pencil, then Enter or Esc) and remove with a trash button; an add box with Add, Ask all now and Copy all sits under the table. **Files** is a checkbox list with a per-file track; **Pieces** is a 160px piece map.
+
+### Piece Map
+A torrent's pieces in order, folded into about 96 equal bars; each bar fills from the bottom as far as its pieces are verified, so a torrent's out-of-order arrival reads as a scatter. On the pass it prints in ink on paper (the barcode block); in the Torrent View it is ivory on the board's hole colour.
+
+### Torrent Picker
+In the Add Sheet for magnets and .torrent files: the name with files · size · pieces in fog, an All files checkbox with a "Fetching N of M · size" summary, a 32px checkbox row per file (type icon, the folder in fog and the name in ivory, size), and a closed Trackers disclosure with an extra-trackers box. A magnet shows "Asking peers for the file list…" while it waits.
+
 ### Status Mark
 A 10px square with 2px corners in a fixed cell, labelled for assistive tech; the same mark appears in hall rows and filter tabs.
 

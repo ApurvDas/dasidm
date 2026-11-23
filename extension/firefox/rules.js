@@ -24,6 +24,15 @@
     return (contentType || '').split(';')[0].trim().toLowerCase();
   }
 
+  function isAddon(mime, url) {
+    if (mime === 'application/x-xpinstall') return true;
+    try {
+      return /\.xpi$/i.test(new URL(url).pathname);
+    } catch {
+      return false;
+    }
+  }
+
   function viewable(mime) {
     return !!mime && VIEWABLE.some((r) => r.test(mime));
   }
@@ -73,6 +82,9 @@
     if (r.incognito && !s.privateToo) return { grab: false, reason: 'private window' };
     if (r.bypassed) return { grab: false, reason: 'left to Firefox (Alt+click)' };
     const mime = mimeOf(r.contentType);
+    // Firefox installs add-ons itself (addons.mozilla.org, "Install Add-on"), so those are never
+    // taken, not even when sent as an attachment.
+    if (isAddon(mime, r.url)) return { grab: false, reason: 'a Firefox add-on' };
     const attach = isAttachment(r.disposition);
     if (!attach && viewable(mime)) return { grab: false, reason: 'Firefox shows it' };
     if (!attach && !mime) return { grab: false, reason: 'no type given' };

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "DasIDM",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Hands the files you download in Firefox to DasIDM, the download manager on this PC.",
   "browser_specific_settings": {
     "gecko": {

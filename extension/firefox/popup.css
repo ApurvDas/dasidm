@@ -1,0 +1,154 @@
+/* DasIDM's Gate Board look: dark glass, ivory type, one yellow for "on". */
+:root {
+  --bg: #11151a;
+  --panel: #1a1f25;
+  --line: rgb(255 255 255 / 0.1);
+  --ivory: #f2f2ee;
+  --fog: #9aa1a9;
+  --steel: #6b7178;
+  --alert: #ffd400;
+  --ok: #4cc38a;
+  --bad: #ff6b6b;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+body {
+  width: 320px;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--ivory);
+  font: 13px/1.4 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+header b {
+  font-family: 'Barlow Condensed', 'Segoe UI Variable Display', sans-serif;
+  font-size: 17px;
+  letter-spacing: 0.06em;
+  flex: 1;
+}
+.state {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.state::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--steel);
+}
+.state.ok::before {
+  background: var(--ok);
+}
+.state.bad {
+  color: var(--bad);
+}
+.state.bad::before {
+  background: var(--bad);
+}
+.why {
+  color: var(--fog);
+  font-size: 12px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.row small {
+  display: block;
+  color: var(--fog);
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+input[type='checkbox'] {
+  appearance: none;
+  flex: none;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: #2a3038;
+  position: relative;
+  cursor: pointer;
+}
+input[type='checkbox']::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fog);
+  transition: transform 0.15s ease-out;
+}
+input[type='checkbox']:checked {
+  background: var(--alert);
+}
+input[type='checkbox']:checked::after {
+  transform: translateX(14px);
+  background: #1a1600;
+}
+input:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--alert);
+  outline-offset: 2px;
+}
+.num {
+  color: var(--fog);
+  white-space: nowrap;
+}
+input[type='number'] {
+  width: 56px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: #0c0f13;
+  color: var(--ivory);
+  font: inherit;
+}
+.btn {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ivory);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.last {
+  color: var(--fog);
+  font-size: 12px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  input[type='checkbox']::after {
+    transition: none;
+  }
+}

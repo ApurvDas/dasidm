@@ -30,13 +30,21 @@ A personal download manager for Windows, written from scratch in Rust (engine + 
 - **Seeding** after the download, until a ratio or time limit (Settings); **Stop seeding** / **Seed** on finished torrents. Upload limit, a default tracker list for every new torrent, a fixed incoming port with UPnP, DHT on or off, and "Use DasIDM for magnets and .torrent files" (this Windows user only).
 - **Low idle RAM still holds:** the BitTorrent session starts only while a torrent is downloading or seeding.
 
-Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause/resume · `Enter` open · `P` parts view · `Del` remove · `Ctrl+F` search · `↑ ↓` move.
+## What works (v0.3.0): Firefox, the pieces bar, actions on every download
+
+- **Firefox extension** (`extension/firefox`): files you download in Firefox open in DasIDM's Add sheet instead (with the site's cookie and referrer, so logged-in downloads work); press Enter to start. Alt+click a link to leave that one to Firefox; right-click a link for **Download with DasIDM**. The toolbar popup shows whether DasIDM is connected and switches capture off, private windows on, or a minimum size. If DasIDM can't take a download, Firefox keeps it.
+  - `DasIDM.exe` is its own native messaging helper: Firefox starts it with the host manifest, it relays to the running DasIDM over a per-user named pipe (no network port), and starts DasIDM in the tray if needed. DasIDM registers this itself on every start (`%LOCALAPPDATA%\DasIDM\browser`, `HKCU\Software\Mozilla\NativeMessagingHosts\dev.dasidm.host`) and unpacks the extension there; Settings → Firefox shows the state, opens that folder and repairs it.
+  - Try it: Firefox → `about:debugging` → This Firefox → Load Temporary Add-on… → `manifest.json` in that folder (until Firefox restarts). To keep it, sign it as an unlisted add-on on addons.mozilla.org (`extension\build.ps1` makes the `.xpi`).
+- **The pieces bar** in the list and on the board: one cell per part a connection is fetching, each filling on its own, with the percentage beside it. Torrents show their pieces.
+- **Actions on every download:** right-click a row (or its ⋯ button, or `Shift+F10`): open, pause, resume or retry, start over, **Start / Stop seeding** for finished torrents, show in folder, copy link, **Remove from list** (files stay) or **Delete from list and PC** (asks first; skips the Recycle Bin).
+
+Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause/resume · `Enter` open · `P` parts view · `Del` remove · `Shift+Del` delete from PC · `Shift+F10` actions · `Ctrl+F` search · `↑ ↓` move.
 
 Add from the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`. A video link given this way opens the quality picker.
 
 ## Coming next (agreed phases)
 
-Browser capture extension, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
+Chrome and Edge extension, video buttons on pages, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
 
 ## Build and run
 
@@ -55,7 +63,8 @@ npx tauri build --no-bundle   # just target/release/dasidm.exe
 Tests:
 
 ```powershell
-cargo test -p das-engine -p das-core
+cargo test -p das-engine -p das-core -p dasidm
+node --test extension/firefox
 ```
 
 ## Git workflow
@@ -72,6 +81,7 @@ crates/das-engine   download engine (no UI, no DB)
 crates/das-core     manager: SQLite, queue, categories, settings, progress events
 app/src-tauri       Tauri shell: commands, tray, Mica window, low-RAM lifecycle
 app/src             Svelte UI
+extension/firefox   Firefox extension (plain JS, no build step)
 ```
 
 Data lives in `%APPDATA%\dev.dasidm.app\dasidm.db`. Start minimised to the tray with `dasidm.exe --background`.

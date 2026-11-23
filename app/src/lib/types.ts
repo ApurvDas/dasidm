@@ -169,6 +169,24 @@ export interface ProbeInfo {
   content_type: string | null;
 }
 
+/** A link handed to the Add sheet: from the command line, or a download Firefox passed on
+ * (with the headers that let the server give DasIDM the same file). */
+export interface PendingAdd {
+  url: string;
+  headers: [string, string][];
+  fileName: string | null;
+  size: number | null;
+  from: string | null;
+}
+
+export interface BrowserStatus {
+  registered?: boolean;
+  manifest?: string;
+  extensionDir?: string;
+  error?: string | null;
+  lastSeen: number | null;
+}
+
 export interface AddRequest {
   url: string;
   fileName?: string | null;

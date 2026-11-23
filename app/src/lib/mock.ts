@@ -430,6 +430,11 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'set_torrent_files':
       mockChosen = (args.only as number[]).length === mockFiles.length ? null : args.only;
       return undefined as T;
+    case 'browser_status':
+    case 'repair_browser':
+      return { registered: true, manifest: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\dev.dasidm.host.json', extensionDir: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\firefox', error: null, lastSeen: Date.now() - 90_000 } as T;
+    case 'open_extension_folder':
+      return undefined as T;
     case 'seed':
       args.ids.forEach((id: string) => {
         const it = find(id);

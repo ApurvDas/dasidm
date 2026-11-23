@@ -1095,7 +1095,7 @@ dependencies = [
 
 [[package]]
 name = "dasidm"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "arboard",
  "das-core",
@@ -1106,6 +1106,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

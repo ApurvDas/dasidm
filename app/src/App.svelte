@@ -13,6 +13,7 @@
   import DeleteDialog from './components/DeleteDialog.svelte';
   import { askRemove } from './lib/actions';
   import { api, inTauri } from './lib/api';
+  import type { PendingAdd } from './lib/types';
   import { app, init, run, select } from './lib/state.svelte';
 
   let hall = $state<ReturnType<typeof Hall>>();
@@ -20,17 +21,19 @@
 
   onMount(() => {
     if (!inTauri) document.body.classList.add('preview');
-    // A video link opened with DasIDM (command line, second launch) goes to the picker.
-    const openAdd = (url: string) => {
+    // A link handed to DasIDM (command line, second launch, Firefox) opens the Add sheet.
+    const openAdd = (p: PendingAdd) => {
       api.takePendingAdd().catch(() => null);
-      app.adding = url;
+      app.addFrom = p.from || p.headers?.length ? p : null;
+      app.addSeq++;
+      app.adding = p.url;
     };
     api.onOpenAdd(openAdd);
     init().then(async () => {
       ready = true;
       if (inTauri) {
         const pending = await api.takePendingAdd().catch(() => null);
-        if (pending) app.adding = pending;
+        if (pending) openAdd(pending);
       }
       // Design preview only (synthetic data): ?select=<id>&parts opens a state for review captures.
       if (!inTauri) {
@@ -39,6 +42,10 @@
         if (id && app.items[id]) select(id);
         if (q.has('parts')) app.partsOpen = true;
         if (q.has('add')) app.adding = q.get('add') || true;
+        // ?firefox previews a download Firefox handed over.
+        if (q.has('firefox')) {
+          openAdd({ url: 'https://downloads.example.org/files/Setup-Studio-2026.exe?token=a81f', headers: [['Cookie', 'session=1']], fileName: 'Setup-Studio-2026.exe', size: 1.42 * 1024 ** 3, from: 'Firefox' });
+        }
       }
     });
     const open = (e: Event) => run(api.openFile((e as CustomEvent<string>).detail));
@@ -121,7 +128,9 @@
 </div>
 
 {#if app.adding}
-  <AddSheet />
+  {#key app.addSeq}
+    <AddSheet />
+  {/key}
 {/if}
 <RowMenu />
 <DeleteDialog />

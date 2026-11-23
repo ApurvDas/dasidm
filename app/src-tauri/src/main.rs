@@ -2,8 +2,12 @@
 //! DasIDM desktop shell. The download core keeps running in the tray; the WebView window
 //! is destroyed whenever it is closed so an idle DasIDM holds almost no memory.
 
+mod browser_host;
+
+use browser_host::{PendingAdd, Registration};
 use das_core::{AddRequest, ItemView, Manager, ProbeInfo, Settings};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::window::{Effect, EffectsBuilder};
@@ -11,8 +15,12 @@ use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, Theme, WebviewUrl
 
 struct App {
     core: Manager,
-    /// A video link from the command line, waiting for the window to show its quality picker.
-    pending_add: parking_lot::Mutex<Option<String>>,
+    /// A link waiting for the window to open the Add sheet with it (a video page, a torrent,
+    /// or a download Firefox handed over).
+    pending_add: parking_lot::Mutex<Option<PendingAdd>>,
+    /// When the Firefox extension last reached DasIDM (ms since 1970, 0 = never this run).
+    browser_seen: AtomicU64,
+    browser_reg: parking_lot::Mutex<Option<Registration>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -25,8 +33,8 @@ fn list_downloads(app: State<'_, App>) -> Vec<ItemView> {
 }
 
 #[tauri::command]
-async fn probe_url(app: State<'_, App>, url: String) -> Res<ProbeInfo> {
-    app.core.probe(url, vec![]).await
+async fn probe_url(app: State<'_, App>, url: String, headers: Option<Vec<(String, String)>>) -> Res<ProbeInfo> {
+    app.core.probe(url, headers.unwrap_or_default()).await
 }
 
 #[tauri::command]
@@ -240,10 +248,71 @@ fn register_torrent_handler() -> Res<()> {
     Ok(())
 }
 
-/// A link handed over on the command line that needs the Add sheet (video sites).
+/// A link handed over (command line, Firefox) that needs the Add sheet.
 #[tauri::command]
-fn take_pending_add(app: State<'_, App>) -> Option<String> {
+fn take_pending_add(app: State<'_, App>) -> Option<PendingAdd> {
     app.pending_add.lock().take()
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserStatus {
+    #[serde(flatten)]
+    reg: Option<Registration>,
+    last_seen: Option<u64>,
+}
+
+/// Is Firefox set up to reach DasIDM, and has the extension been in touch?
+#[tauri::command]
+fn browser_status(app: State<'_, App>) -> BrowserStatus {
+    let seen = app.browser_seen.load(Ordering::Relaxed);
+    BrowserStatus { reg: app.browser_reg.lock().clone(), last_seen: (seen > 0).then_some(seen) }
+}
+
+/// Write the Firefox registration again (after moving DasIDM, or if something removed it).
+#[tauri::command]
+async fn repair_browser(app: State<'_, App>) -> Res<BrowserStatus> {
+    let reg = tauri::async_runtime::spawn_blocking(browser_host::register).await.map_err(|e| e.to_string())?;
+    if let Some(e) = &reg.error {
+        return Err(e.clone());
+    }
+    *app.browser_reg.lock() = Some(reg);
+    Ok(browser_status(app))
+}
+
+/// Explorer at the unpacked extension (for Firefox's "Load Temporary Add-on").
+#[tauri::command]
+fn open_extension_folder() -> Res<()> {
+    let dir = browser_host::browser_dir().join("firefox");
+    std::process::Command::new("explorer").arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Answers the Firefox helper: a ping, or a download to open in the Add sheet.
+fn browser_handler(handle: AppHandle) -> browser_host::Handler {
+    use browser_host::Request;
+    Arc::new(move |req| {
+        let app = handle.state::<App>();
+        app.browser_seen.store(now_ms(), Ordering::Relaxed);
+        match req {
+            Request::Ping => serde_json::json!({ "ok": true, "app": "DasIDM", "version": env!("CARGO_PKG_VERSION") }),
+            Request::Download(d) => match d.into_pending() {
+                Ok(p) => {
+                    *app.pending_add.lock() = Some(p.clone());
+                    let h = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        show_main(&h);
+                        let _ = h.emit("open-add", p);
+                    });
+                    serde_json::json!({ "accepted": true })
+                }
+                Err(e) => serde_json::json!({ "accepted": false, "error": e }),
+            },
+        }
+    })
 }
 
 /// The first link on the clipboard, so Add URL can open prefilled.
@@ -300,9 +369,9 @@ fn show_main(app: &AppHandle) {
 fn add_urls(app: &AppHandle, args: &[String]) {
     // A magnet link or a .torrent file opens the Add sheet with its file list.
     if let Some(t) = args.iter().skip(1).find(|a| das_core::is_torrent_link(a)) {
-        *app.state::<App>().pending_add.lock() = Some(t.clone());
+        *app.state::<App>().pending_add.lock() = Some(PendingAdd::link(t.clone()));
         show_main(app);
-        let _ = app.emit("open-add", t.clone());
+        let _ = app.emit("open-add", PendingAdd::link(t.clone()));
     }
     let mut urls: Vec<String> = args
         .iter()
@@ -312,9 +381,9 @@ fn add_urls(app: &AppHandle, args: &[String]) {
     // A video page needs a quality choice: open the Add sheet with it instead of saving the page.
     if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u)) {
         let link = urls.remove(i);
-        *app.state::<App>().pending_add.lock() = Some(link.clone());
+        *app.state::<App>().pending_add.lock() = Some(PendingAdd::link(link.clone()));
         show_main(app);
-        let _ = app.emit("open-add", link);
+        let _ = app.emit("open-add", PendingAdd::link(link));
     }
     if urls.is_empty() {
         return;
@@ -343,6 +412,10 @@ fn quit(app: &AppHandle) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // Started by Firefox as its helper: relay messages, no window, no WebView, then exit.
+    if browser_host::is_host_launch(&args) {
+        std::process::exit(browser_host::run_host());
+    }
     let start_hidden = args.iter().any(|a| a == "--background");
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -388,7 +461,10 @@ fn main() {
             set_torrent_files,
             seed,
             pick_torrent_file,
-            register_torrent_handler
+            register_torrent_handler,
+            browser_status,
+            repair_browser,
+            open_extension_folder
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -408,8 +484,21 @@ fn main() {
                 tauri::async_runtime::block_on(async move { c.set_settings(s) })?;
             }
             tauri::async_runtime::spawn(core.clone().run());
-            app.manage(App { core, pending_add: parking_lot::Mutex::new(None) });
+            app.manage(App {
+                core,
+                pending_add: parking_lot::Mutex::new(None),
+                browser_seen: AtomicU64::new(0),
+                browser_reg: parking_lot::Mutex::new(None),
+            });
             add_urls(&handle, &args);
+
+            // Firefox: keep the helper registered (cheap when unchanged) and answer it.
+            let h = handle.clone();
+            std::thread::spawn(move || {
+                let reg = browser_host::register();
+                *h.state::<App>().browser_reg.lock() = Some(reg);
+            });
+            tauri::async_runtime::spawn(browser_host::serve(browser_host::pipe_name(), browser_handler(handle.clone())));
 
             let open = MenuItem::with_id(app, "open", "Open DasIDM", true, None::<&str>)?;
             let pause = MenuItem::with_id(app, "pause_all", "Pause all", true, None::<&str>)?;
@@ -448,7 +537,7 @@ fn main() {
             // A .torrent file dropped on the window opens it in the Add sheet.
             if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 if let Some(p) = paths.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("torrent"))) {
-                    let _ = window.app_handle().emit("open-add", p.to_string_lossy().into_owned());
+                    let _ = window.app_handle().emit("open-add", PendingAdd::link(p.to_string_lossy()));
                 }
             }
             if let WindowEvent::Destroyed = event {

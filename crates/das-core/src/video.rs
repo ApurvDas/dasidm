@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -739,7 +739,7 @@ impl VideoState {
                 if let Some(sp) = speed {
                     self.speed = if self.speed == 0.0 { sp } else { self.speed * 0.6 + sp * 0.4 };
                 }
-                if !tmp.is_empty() && tmp != "NA" && !self.partials.contains(&tmp) {
+                if !tmp.is_empty() && tmp != "NA" && !tmp.contains('\u{FFFD}') && !self.partials.contains(&tmp) {
                     self.partials.push(tmp);
                 }
             }
@@ -830,6 +830,19 @@ impl VideoJob {
     }
 }
 
+/// The next line of yt-dlp's output as text. yt-dlp prints file paths in the Windows ANSI code
+/// page whatever `--encoding` says, so a title with a dash or an accent puts bytes in the line
+/// that are not UTF-8. `lines()` fails on those and, once the reader stopped, yt-dlp's next write
+/// to the closed pipe died with "[Errno 22] Invalid argument". Bytes that don't decode become
+/// U+FFFD instead and the reader carries on. `None` only at the end of the stream.
+async fn next_text<R: AsyncBufRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) -> Option<String> {
+    buf.clear();
+    match r.read_until(b'\n', buf).await {
+        Ok(0) | Err(_) => None,
+        Ok(_) => Some(String::from_utf8_lossy(buf).trim_end_matches(['\r', '\n']).to_string()),
+    }
+}
+
 async fn run(s: &Arc<Shared>, program: &Path, args: &[String]) -> Result<PathBuf, VideoError> {
     let mut cmd = hidden(program);
     cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -850,8 +863,9 @@ async fn run(s: &Arc<Shared>, program: &Path, args: &[String]) -> Result<PathBuf
     let stderr = child.stderr.take().map(|e| {
         let s = s.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(e).lines();
-            while let Ok(Some(l)) = lines.next_line().await {
+            let mut reader = BufReader::new(e);
+            let mut buf = Vec::new();
+            while let Some(l) = next_text(&mut reader, &mut buf).await {
                 if l.starts_with("ERROR") {
                     let mut st = s.st.lock();
                     st.errors.push_back(l);
@@ -863,8 +877,9 @@ async fn run(s: &Arc<Shared>, program: &Path, args: &[String]) -> Result<PathBuf
         })
     });
     if let Some(out) = child.stdout.take() {
-        let mut lines = BufReader::new(out).lines();
-        while let Ok(Some(l)) = lines.next_line().await {
+        let mut reader = BufReader::new(out);
+        let mut buf = Vec::new();
+        while let Some(l) = next_text(&mut reader, &mut buf).await {
             let parsed = parse_line(&l);
             if parsed != Line::Other {
                 s.st.lock().apply(parsed);
@@ -1082,6 +1097,27 @@ mod tests {
         assert_eq!(parse_line("DASQ|Merger|started"), Line::Post { processor: "Merger".into(), status: "started".into() });
         assert_eq!(parse_line("DASF|C:\\Videos\\Clip.mp4\r"), Line::Final(PathBuf::from("C:\\Videos\\Clip.mp4")));
         assert_eq!(parse_line("[download] something"), Line::Other);
+    }
+
+    #[tokio::test]
+    async fn reads_output_that_is_not_utf8() {
+        // What yt-dlp prints for "Neuromancer \u{2014} Official Teaser": the dash is 0x97 in the ANSI
+        // code page. The reader must get through it and on to the lines after it.
+        let mut raw: Vec<u8> = b"DASP|401|downloading|1024|NA|NA|NA|NA|C:\\x\\Neuromancer ".to_vec();
+        raw.push(0x97);
+        raw.extend_from_slice(b" Teaser.f401.mp4.part\r\nDASQ|Merger|started\r\nERROR: boom");
+        let mut r = BufReader::new(&raw[..]);
+        let mut buf = Vec::new();
+        let first = next_text(&mut r, &mut buf).await.unwrap();
+        assert!(first.starts_with("DASP|401|") && first.contains('\u{FFFD}') && !first.ends_with('\r'));
+        assert_eq!(next_text(&mut r, &mut buf).await.unwrap(), "DASQ|Merger|started");
+        assert_eq!(next_text(&mut r, &mut buf).await.unwrap(), "ERROR: boom");
+        assert_eq!(next_text(&mut r, &mut buf).await, None);
+        // The damaged path is not kept as a partial file to look for later.
+        let mut st = VideoState::default();
+        st.apply(parse_line(&first));
+        assert_eq!(st.downloaded(), 1024);
+        assert!(st.partials.is_empty());
     }
 
     #[test]

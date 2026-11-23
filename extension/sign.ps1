@@ -30,7 +30,9 @@ $secure = Read-Host 'JWT secret (hidden as you type)' -AsSecureString
 if (-not $issuer -or $secure.Length -eq 0) { throw 'Both the JWT issuer and the JWT secret are needed.' }
 
 $webExt = @('web-ext', 'sign', "--channel=$channel", '--source-dir', 'firefox', '--artifacts-dir', 'dist', '--ignore-files', 'rules.test.mjs')
-if ($Listed) { $webExt += @('--amo-metadata', 'amo\metadata.json') }
+# A listed version waits for Mozilla's reviewers (often days): stop once it is uploaded and
+# passed the automatic checks, instead of waiting and timing out.
+if ($Listed) { $webExt += @('--amo-metadata', 'amo\metadata.json', '--approval-timeout', '0') }
 $before = @(Get-ChildItem 'dist' -Filter '*.xpi' -ErrorAction SilentlyContinue | ForEach-Object FullName)
 try {
     $env:WEB_EXT_API_KEY = $issuer

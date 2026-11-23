@@ -16,8 +16,18 @@
 
   onMount(() => {
     if (!inTauri) document.body.classList.add('preview');
-    init().then(() => {
+    // A video link opened with DasIDM (command line, second launch) goes to the picker.
+    const openAdd = (url: string) => {
+      api.takePendingAdd().catch(() => null);
+      app.adding = url;
+    };
+    api.onOpenAdd(openAdd);
+    init().then(async () => {
       ready = true;
+      if (inTauri) {
+        const pending = await api.takePendingAdd().catch(() => null);
+        if (pending) app.adding = pending;
+      }
       // Design preview only (synthetic data): ?select=<id>&parts opens a state for review captures.
       if (!inTauri) {
         const q = new URLSearchParams(location.search);

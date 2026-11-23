@@ -35,6 +35,16 @@ export function duration(secs: number | null | undefined): string {
   return `${Math.floor(h / 24)}d ${h % 24}h`;
 }
 
+/** Media length as players show it: 3:58, 21:08, 1:02:15. */
+export function clock(secs: number | null | undefined): string {
+  if (secs == null || !isFinite(secs)) return '';
+  const s = Math.round(secs);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 /** Wall-clock time a download will finish, like a departure time. */
 export function doneAt(etaSecs: number | null | undefined): string {
   if (etaSecs == null) return '--:--';

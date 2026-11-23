@@ -56,6 +56,8 @@ pub struct Snapshot {
     pub resumable: bool,
     pub segments: Vec<SegmentView>,
     pub error: Option<EngineError>,
+    /// The server's Content-Type, once known (used to categorise names without an extension).
+    pub content_type: Option<String>,
 }
 
 struct Segment {
@@ -88,6 +90,7 @@ struct Meta {
     etag: Option<String>,
     last_modified: Option<String>,
     file_path: Option<PathBuf>,
+    content_type: Option<String>,
     phase: Phase,
     error: Option<EngineError>,
 }
@@ -158,6 +161,7 @@ impl DownloadHandle {
             resumable: s.resumable.load(Relaxed),
             segments,
             error: m.error.clone(),
+            content_type: m.content_type.clone(),
         }
     }
 
@@ -330,6 +334,12 @@ async fn run(s: Arc<Shared>, resume: Option<ResumeState>) -> Result<Completed, E
         first = None;
     } else {
         let resp = first_request(&s, &client0).await?;
+        let content_type = header_str(resp.headers(), header::CONTENT_TYPE);
+        // Refuse a web page before any file exists, unless the user asked for the page itself.
+        if !s.req.allow_html && crate::is_web_page(content_type.as_deref()) {
+            return Err(EngineError::WebPage);
+        }
+        s.meta.lock().content_type = content_type;
         let (size, resumable) = parse_size(&resp, 0);
         let name = detect_name(s.req.file_name.as_deref(), &resp);
         let dir = s.req.save_dir.clone();
@@ -759,6 +769,28 @@ pub(crate) async fn probe(cfg: &EngineConfig, req: &DownloadRequest) -> Result<P
         resumable,
         content_type: header_str(resp.headers(), header::CONTENT_TYPE),
     })
+}
+
+pub(crate) async fn fetch_small(cfg: &EngineConfig, url: &str, limit: usize) -> Result<(Vec<u8>, Option<String>), EngineError> {
+    let client = make_client(cfg)?;
+    let mut resp = client
+        .get(url)
+        .timeout(cfg.read_timeout.max(Duration::from_secs(20)))
+        .send()
+        .await
+        .map_err(|e| EngineError::Network(e.to_string()))?;
+    if !resp.status().is_success() {
+        return Err(EngineError::Http(resp.status().as_u16()));
+    }
+    let content_type = header_str(resp.headers(), header::CONTENT_TYPE);
+    let mut body = Vec::new();
+    while let Some(chunk) = resp.chunk().await.map_err(|e| EngineError::Network(e.to_string()))? {
+        if body.len() + chunk.len() > limit {
+            return Err(EngineError::Network(format!("response larger than {limit} bytes")));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok((body, content_type))
 }
 
 fn make_client(cfg: &EngineConfig) -> Result<Client, EngineError> {

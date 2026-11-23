@@ -22,6 +22,17 @@
     link: 'M7 9a2.8 2.8 0 0 0 4 0l2-2a2.8 2.8 0 0 0-4-4l-.8.8M9 7a2.8 2.8 0 0 0-4 0L3 9a2.8 2.8 0 0 0 4 4l.8-.8',
     check: 'M3.5 8.5l3 3 6-7',
     alert: 'M8 2.5l6 11H2zM8 6.5v3.5M8 11.8v.2',
+    // File types: told apart by shape, never by colour (yellow stays for change).
+    'type-video': 'M2 3.5h12v9H2zM6.5 6v4l3.5-2z',
+    'type-music': 'M6 11.5V4l7-1.5v7.5M6 11.5a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0zM13 10a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0z',
+    'type-programs': 'M2 3h12v10H2zM2 6h12M4.5 8.5l1.75 1.25L4.5 11M8 11h3',
+    'type-archives': 'M2.5 3h11v3h-11zM3.5 6v7h9V6M6.5 8.5h3',
+    'type-discs': 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM8 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z',
+    'type-documents': 'M4 2h5l3 3v9H4zM9 2v3h3M6 8.5h4M6 11h4',
+    'type-images': 'M2 3h12v10H2zM2 11l3.5-3.5 3 3 2-2L14 12M10.5 5.75h.01',
+    'type-torrents': 'M3.5 3h2.5v5a2 2 0 0 0 4 0V3h2.5v5a4.5 4.5 0 0 1-9 0zM3.5 5.5h2.5M10 5.5h2.5',
+    'type-web': 'M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM2 8h12M8 2c-2.2 2.2-2.2 9.8 0 12M8 2c2.2 2.2 2.2 9.8 0 12',
+    'type-other': 'M4 2h5l3 3v9H4zM9 2v3h3',
   };
   let { name, size = 16 }: { name: string; size?: number } = $props();
 </script>

@@ -13,13 +13,22 @@ A personal download manager for Windows, written from scratch in Rust (engine + 
 
 - **Parts view:** every download's pass shows a live map of its parts; **Open parts** (`P`) shows each connection as its own row with byte range, progress and speed. When a fast line takes over half of a slow line's part, the cut flashes yellow and the new row reads "SPLIT FROM #NN" (animated with anime.js; off under reduced motion).
 
+## What works (v0.1.1)
+
+- **Video and music links** (YouTube and the other sites yt-dlp reads): Add URL shows a **quality picker** instead of saving the web page. Video: every resolution the site has, as "MP4 · H.264 · plays everywhere" or "best quality" (VP9/AV1, WebM/MKV), with sizes. Sound only: M4A (original, not re-encoded), MP3 320, Opus (original), FLAC (labelled honestly: the source is lossy). Playlists: "This video" or "Whole playlist". Pause, resume, retry on YouTube's occasional 403, and remove all work; titles, artist and (for music) cover art are embedded.
+- **Video tools on demand:** the first video link asks once to fetch yt-dlp, ffmpeg and deno (about 158 MB; about 320 MB unpacked) from the publishers' GitHub releases into `%LOCALAPPDATA%\DasIDM\tools`. Every file is checked against the publisher's SHA-256 list before it is used; yt-dlp is refreshed weekly. Each job works in its own hidden `.dasidm` folder and the finished file is moved next to yours under a free name, so a video job never overwrites a file.
+- **Never saves a web page by accident:** a link that answers with HTML shows "This link is a web page, not a file" with a deliberate **Save page anyway**.
+- **Add URL picks up the clipboard:** `Add URL` / `Ctrl+N` open prefilled with the first link on the clipboard ("From clipboard").
+- **Browse…** opens the Windows folder picker for the Add sheet's folder and Settings' download folder.
+- **File types told apart:** an icon per type (video, music, program, archive, disc image, document, image, torrent, web page, other), a sortable Type column, type chips with counts above the list, and for media the quality and length (`1080p · 21:08`, `MP3 · 3:58`), channel and real thumbnail on the pass. Types come from the extension, or the server's Content-Type when the name has none.
+
 Keyboard: `Ctrl+V` add a copied link · `Ctrl+N` add · `Space` pause/resume · `Enter` open · `P` parts view · `Del` remove · `Ctrl+F` search · `↑ ↓` move.
 
-Add from the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`.
+Add from the command line (also hands links to a running DasIDM): `dasidm.exe https://example.com/file.iso`. A video link given this way opens the quality picker.
 
 ## Coming next (agreed phases)
 
-Browser capture extension, video/music grabbing (yt-dlp + ffmpeg, MP4 / MP3 / FLAC), torrents and magnets, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
+Torrents and magnets with editable trackers (plan in `docs/plans/torrents.md`), browser capture extension, faster video via DasIDM's own multi-connection engine, scheduler and "shut down when done", clipboard monitor, batch downloads, site grabber.
 
 ## Build and run
 
@@ -40,6 +49,13 @@ Tests:
 ```powershell
 cargo test -p das-engine -p das-core
 ```
+
+## Git workflow
+
+- `main` is always releasable; each release is a tag (`v0.1.0`, …). Remote: private GitHub repo `ApurvDas/dasidm`.
+- New work goes on a branch named for the feature (`feature/media-and-add-flow`), one commit per milestone with tests passing, then a pull request into `main`.
+- Commit messages follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
+- Plans for upcoming phases live in `docs/plans/` (e.g. `docs/plans/torrents.md`).
 
 ## Layout
 

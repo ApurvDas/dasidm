@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   import { api } from '../lib/api';
   import { app, run, select } from '../lib/state.svelte';
   import { bytes } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
-  import type { ProbeInfo } from '../lib/types';
+  import VideoPicker from './VideoPicker.svelte';
+  import { isWebPage, type ProbeInfo, type VideoInfo, type VideoOption } from '../lib/types';
 
   let url = $state(typeof app.adding === 'string' ? app.adding : '');
   let name = $state('');
@@ -14,22 +16,72 @@
   let error = $state('');
   let input = $state<HTMLInputElement>();
   let token = 0;
+  /** The link came from the clipboard (Add URL / Ctrl+N), not from typing or pasting. */
+  let fromClip = $state(false);
+
+  // Video and music links.
+  let video = $state<VideoInfo | null>(null);
+  let resolving = $state(false);
+  let videoError = $state('');
+  let chosen = $state<VideoOption | null>(null);
+  let playlist = $state(false);
+  let installing = $state(false);
+
+  /** Sites that are video or music pages almost always: read them with yt-dlp right away. */
+  const VIDEO_HOSTS =
+    /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com|soundcloud\.com|bandcamp\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com|x\.com|twitter\.com|reddit\.com|facebook\.com|bilibili\.com|rumble\.com|odysee\.com|mixcloud\.com)$/i;
+  const videoHost = (u: string) => {
+    try {
+      return VIDEO_HOSTS.test(new URL(u).hostname);
+    } catch {
+      return false;
+    }
+  };
+
+  onMount(async () => {
+    if (app.adding !== true) return;
+    const link = await api.clipboardLink().catch(() => null);
+    if (link && !url) {
+      url = link;
+      fromClip = true;
+      await tick();
+      input?.select();
+    }
+  });
+
+  async function browse() {
+    const start = folder.trim() || app.settings?.downloadDir;
+    const picked = await run(api.pickFolder(start));
+    if (picked) folder = picked;
+  }
 
   $effect(() => {
     input?.focus();
     input?.select();
   });
 
+  const magnet = $derived(/^magnet:\?/i.test(url.trim()));
   const valid = $derived(/^https?:\/\/\S+$/i.test(url.trim()));
+  // A link that answers with HTML is a page (e.g. a share link), not a file.
+  const isPage = $derived(!!info && isWebPage(info.content_type));
+  const toolsReady = $derived(!!app.tools?.ready);
+  /** Worth asking yt-dlp: a known video site, or any link that turned out to be a page. */
+  const maybeVideo = $derived(valid && (videoHost(url.trim()) || isPage));
 
   $effect(() => {
     const u = url.trim();
     info = null;
     error = '';
+    video = null;
+    videoError = '';
+    chosen = null;
+    playlist = false;
+    resolving = false;
     if (!/^https?:\/\/\S+$/i.test(u)) return;
     const mine = ++token;
-    probing = true;
+    probing = !videoHost(u);
     const t = setTimeout(async () => {
+      if (videoHost(u)) return; // a video site's page is never the file people want
       try {
         const r = await api.probe(u);
         if (mine !== token) return;
@@ -44,12 +96,38 @@
     return () => clearTimeout(t);
   });
 
+  // Read the page with yt-dlp once the tools are there (also right after installing them).
+  $effect(() => {
+    if (!maybeVideo || !toolsReady || video || resolving || videoError) return;
+    const u = url.trim();
+    const mine = token;
+    resolving = true;
+    api
+      .videoInfo(u)
+      .then((v) => {
+        if (mine === token) video = v;
+      })
+      .catch((e) => {
+        if (mine === token) videoError = String(e);
+      })
+      .finally(() => {
+        if (mine === token) resolving = false;
+      });
+  });
+
+  async function getTools() {
+    installing = true;
+    await run(api.installTools());
+    installing = false;
+  }
+
   function close() {
     app.adding = false;
   }
 
-  async function submit(start: boolean) {
-    if (!valid) return;
+  async function submit(start: boolean, allowPage = false) {
+    if (video) return submitVideo(start);
+    if (!valid || ((isPage || videoHost(url.trim())) && !allowPage)) return;
     const added = await run(
       api.add({
         url: url.trim(),
@@ -57,11 +135,34 @@
         saveDir: folder.trim() || null,
         connections: lines,
         start,
+        allowPage,
       }),
     );
     if (added) {
       close();
       select(added.id);
+    }
+  }
+
+  async function submitVideo(start: boolean) {
+    if (!video || !chosen) return;
+    const added = await run(
+      api.addVideo({
+        url: video.url || url.trim(),
+        option: chosen,
+        title: video.title,
+        channel: video.channel,
+        duration: video.duration,
+        thumbnail: video.thumbnail,
+        site: video.site,
+        saveDir: folder.trim() || null,
+        start,
+        playlist,
+      }),
+    );
+    if (added?.length) {
+      close();
+      select(added[0].id);
     }
   }
 
@@ -71,7 +172,7 @@
     if (e.key === 'Escape') close();
     if (e.key === 'Tab' && sheet) {
       // Keep focus inside the sheet.
-      const f = [...sheet.querySelectorAll<HTMLElement>('input, select, button:not([disabled])')];
+      const f = [...sheet.querySelectorAll<HTMLElement>('input:not([type=radio]), input[type=radio]:checked, select, button:not([disabled])')];
       const i = f.indexOf(document.activeElement as HTMLElement);
       if (e.shiftKey && i <= 0) {
         e.preventDefault();
@@ -86,6 +187,9 @@
       submit(true);
     }
   }
+
+  const step = $derived(app.tools?.installing);
+  const pagePlain = $derived(isPage && !video && !resolving && (!!videoError || !maybeVideo));
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -94,48 +198,92 @@
   <label class="cap" for="add-url">Link to download</label>
   <div class="urlrow">
     <Icon name="link" />
-    <input id="add-url" bind:this={input} class="field" bind:value={url} placeholder="https://…" spellcheck="false" autocomplete="off" />
+    <input id="add-url" bind:this={input} class="field" bind:value={url} oninput={() => (fromClip = false)} placeholder="https://…" spellcheck="false" autocomplete="off" />
+    {#if fromClip}<span class="clip">From clipboard</span>{/if}
   </div>
 
   <div class="probe" aria-live="polite">
-    {#if probing}
+    {#if resolving}
+      <span class="cap">Reading the video page…</span>
+    {:else if video}
+      <!-- the picker below says it all -->
+    {:else if maybeVideo && !toolsReady}
+      <div class="tools">
+        <p><b>Is this a video or a song?</b> DasIDM can save it with yt-dlp and ffmpeg: free tools it downloads once from their official releases (about {bytes(app.tools?.installSize ?? 158_000_000)}) and checks before use.</p>
+        {#if step}
+          <div class="inst">
+            <span class="cap">Getting {step.step} · {step.index + 1} of {step.count}</span>
+            <span class="track"><span class="fill" style:width="{Math.min(100, (100 * step.downloaded) / (step.size || 1))}%"></span></span>
+            <span class="cap">{bytes(step.downloaded)}</span>
+          </div>
+        {:else if app.tools?.error}
+          <span class="bad">{app.tools.error}</span>
+        {/if}
+      </div>
+    {:else if probing}
       <span class="cap">Asking the server…</span>
     {:else if error}
       <span class="bad">{error}. You can still add it; DasIDM will retry.</span>
+    {:else if pagePlain}
+      <span class="page-line"
+        ><Icon name="alert" />
+        {videoError && !/isn't supported/.test(videoError) ? `${videoError}.` : 'This link is a web page, not a file.'} DasIDM won't save it unless you ask.</span
+      >
     {:else if info}
       <span class="ok-line">
         <b>{bytes(info.size)}</b>
         <span class="tag" class:no={!info.resumable}>{info.resumable ? 'Resumable · multi-line' : 'No resume · single line'}</span>
         {#if info.content_type}<span class="cap">{info.content_type.split(';')[0]}</span>{/if}
       </span>
+    {:else if magnet}
+      <span class="cap">Magnet links need torrent support, which comes in a later version.</span>
     {:else if url && !valid}
       <span class="cap">Links start with http:// or https://</span>
     {/if}
   </div>
 
+  {#if video}
+    <VideoPicker info={video} bind:chosen bind:playlist />
+  {/if}
+
   <div class="grid">
-    <label>
-      <span class="cap">Save as</span>
-      <input class="field" bind:value={name} placeholder={info?.file_name ?? 'Name from the server'} spellcheck="false" />
-    </label>
-    <label>
-      <span class="cap">Lines</span>
-      <select class="field" bind:value={lines}>
-        {#each [1, 2, 4, 8, 12, 16, 24, 32] as n}
-          <option value={n}>{n}</option>
-        {/each}
-      </select>
-    </label>
-    <label class="wide">
-      <span class="cap">Folder</span>
-      <input class="field" bind:value={folder} placeholder={app.settings?.categoryFolders ? `${app.settings?.downloadDir}\\<type>` : app.settings?.downloadDir} spellcheck="false" />
-    </label>
+    {#if !video && !videoHost(url.trim())}
+      <label>
+        <span class="cap">Save as</span>
+        <input class="field" bind:value={name} placeholder={info?.file_name ?? 'Name from the server'} spellcheck="false" />
+      </label>
+      <label>
+        <span class="cap">Lines</span>
+        <select class="field" bind:value={lines}>
+          {#each [1, 2, 4, 8, 12, 16, 24, 32] as n}
+            <option value={n}>{n}</option>
+          {/each}
+        </select>
+      </label>
+    {/if}
+    <div class="wide">
+      <label class="cap" for="add-folder">Folder</label>
+      <div class="folderrow">
+        <input id="add-folder" class="field" bind:value={folder} placeholder={app.settings?.categoryFolders ? `${app.settings?.downloadDir}\\<type>` : app.settings?.downloadDir} spellcheck="false" />
+        <button class="btn" onclick={browse}><Icon name="folder" />Browse…</button>
+      </div>
+    </div>
   </div>
 
   <div class="foot">
     <button class="btn ghost" onclick={close}>Cancel<kbd>Esc</kbd></button>
-    <button class="btn" disabled={!valid} onclick={() => submit(false)}>Add paused</button>
-    <button class="btn primary" disabled={!valid} onclick={() => submit(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
+    {#if video}
+      <button class="btn" disabled={!chosen} onclick={() => submitVideo(false)}>Add paused</button>
+      <button class="btn primary" disabled={!chosen} onclick={() => submitVideo(true)}><Icon name="down" />Download{playlist && video.playlist ? ` ${video.playlist.count}` : ''}<kbd>Enter</kbd></button>
+    {:else if maybeVideo && !toolsReady}
+      {#if isPage}<button class="btn" onclick={() => submit(true, true)}>Save page anyway</button>{/if}
+      <button class="btn primary" disabled={installing || !!step} onclick={getTools}><Icon name="down" />{installing || step ? 'Getting video tools…' : 'Get video tools'}</button>
+    {:else if isPage || (videoHost(url.trim()) && (videoError || resolving))}
+      <button class="btn" disabled={resolving} onclick={() => submit(true, true)}>Save page anyway</button>
+    {:else}
+      <button class="btn" disabled={!valid} onclick={() => submit(false)}>Add paused</button>
+      <button class="btn primary" disabled={!valid} onclick={() => submit(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
+    {/if}
   </div>
 </div>
 
@@ -151,6 +299,8 @@
     top: 46px;
     right: 14px;
     width: 560px;
+    max-height: calc(100vh - 60px);
+    overflow: auto;
     z-index: 21;
     background: #14171c;
     border: 1px solid var(--line-strong);
@@ -182,10 +332,68 @@
     padding-left: 32px;
     font-size: 14px;
   }
+  .clip {
+    position: absolute;
+    right: 8px;
+    top: 9px;
+    font-size: 11px;
+    padding: 2px 7px;
+    border-radius: 9px;
+    color: var(--fog);
+    border: 1px solid var(--line-strong);
+    pointer-events: none;
+  }
+  .urlrow input:has(+ .clip) {
+    padding-right: 112px;
+  }
+  .folderrow {
+    display: flex;
+    gap: 6px;
+  }
+  .folderrow input {
+    flex: 1;
+    min-width: 0;
+  }
+  .wide {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
   .probe {
     min-height: 22px;
     display: flex;
     align-items: center;
+  }
+  .probe:empty {
+    display: none;
+  }
+  .tools {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    line-height: 1.45;
+    color: var(--fog);
+  }
+  .tools b {
+    color: var(--ivory);
+  }
+  .inst {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  .track {
+    height: 4px;
+    border-radius: 2px;
+    background: rgb(255 255 255 / 0.08);
+    overflow: hidden;
+  }
+  .fill {
+    display: block;
+    height: 100%;
+    background: var(--ivory);
+    transition: width 240ms linear;
   }
   .ok-line {
     display: flex;
@@ -210,6 +418,16 @@
   }
   .bad {
     color: var(--bad);
+  }
+  .page-line {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    color: var(--ivory);
+  }
+  .page-line :global(svg) {
+    color: var(--fog);
+    flex: none;
   }
   .grid {
     display: grid;

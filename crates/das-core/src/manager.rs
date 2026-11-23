@@ -1,10 +1,12 @@
 //! Owns all downloads: queue admission, engine jobs, progress batching, checkpoints.
 
-use crate::categories::{categorize, folder_for};
+use crate::categories::{categorize, categorize_with, folder_for};
 use crate::db::Db;
 use crate::model::*;
 use crate::settings::Settings;
-use das_engine::filename::{file_name_from_url, part_path, sanitize_file_name};
+use crate::tools::{Tools, ToolsStatus};
+use crate::video::{self, VideoError, VideoInfo, VideoJob, VideoSpec};
+use das_engine::filename::{file_name_from_url, part_path, sanitize_file_name, unique_path};
 use das_engine::{DownloadHandle, DownloadRequest, Engine, EngineConfig, EngineError, ProbeInfo};
 use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
@@ -31,6 +33,8 @@ struct Inner {
     /// Last 60 s of total speed (4 samples per second), kept here because the window
     /// (and its memory) is destroyed whenever it closes.
     history: Mutex<std::collections::VecDeque<u64>>,
+    tools: Arc<Tools>,
+    data_dir: PathBuf,
 }
 
 const HISTORY: usize = 240;
@@ -42,8 +46,23 @@ struct State {
     next_position: i64,
 }
 
+/// A running download: a file through the engine, or a video link through yt-dlp.
+enum Job {
+    Http(DownloadHandle),
+    Video(VideoJob),
+}
+
+impl Job {
+    fn pause(&self) {
+        match self {
+            Job::Http(h) => h.pause(),
+            Job::Video(v) => v.pause(),
+        }
+    }
+}
+
 struct Running {
-    handle: DownloadHandle,
+    job: Job,
     last_bytes: u64,
     last_at: Instant,
     speed: f64,
@@ -66,6 +85,7 @@ impl Manager {
         }
         let engine = Engine::new(EngineConfig::default());
         engine.global_limiter().set_rate(settings.speed_limit);
+        let tools = Tools::new(emit.clone());
         Ok(Self {
             inner: Arc::new(Inner {
                 engine,
@@ -76,6 +96,8 @@ impl Manager {
                 visible: AtomicBool::new(true),
                 was_running: AtomicBool::new(false),
                 history: Mutex::new(std::collections::VecDeque::with_capacity(HISTORY)),
+                tools,
+                data_dir: data_dir.to_path_buf(),
             }),
         })
     }
@@ -126,7 +148,7 @@ impl Manager {
     }
 
     pub async fn probe(&self, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {
-        let req = DownloadRequest { url, headers, save_dir: PathBuf::new(), file_name: None, connections: 1 };
+        let req = DownloadRequest { url, headers, save_dir: PathBuf::new(), file_name: None, connections: 1, allow_html: true };
         self.inner.engine.probe(&req).await.map_err(|e| e.to_string())
     }
 
@@ -172,6 +194,9 @@ impl Manager {
                 resume: None,
                 position,
                 name_fixed,
+                allow_html: req.allow_page,
+                kind: Kind::Http,
+                video: None,
             };
             let _ = self.inner.db.lock().save_item(&item);
             let view = ItemView::from(&item);
@@ -183,13 +208,132 @@ impl Manager {
         Ok(view)
     }
 
+    // ---- Video and music links -------------------------------------------------------
+
+    pub fn tools_status(&self) -> ToolsStatus {
+        self.inner.tools.status()
+    }
+
+    /// Download the video helpers (only ever called after the user agreed in the UI).
+    pub async fn install_tools(&self) -> Result<(), String> {
+        self.inner.tools.install(&self.inner.engine, false).await
+    }
+
+    /// Fetch a newer yt-dlp if there is one. Returns whether it changed.
+    pub async fn update_tools(&self) -> Result<bool, String> {
+        self.inner.tools.update(&self.inner.engine).await
+    }
+
+    /// Read a video page and list its quality choices.
+    pub async fn video_info(&self, url: String) -> Result<VideoInfo, String> {
+        if !self.inner.tools.ready() {
+            return Err("Video tools are not installed".into());
+        }
+        let tools = self.inner.tools.clone();
+        let engine = self.inner.engine.clone();
+        tokio::spawn(async move { tools.update_if_stale(&engine).await });
+        video::resolve(&self.inner.tools, url.trim()).await
+    }
+
+    /// Add a video (or, with `playlist`, every video of its playlist) with the chosen quality.
+    pub async fn add_video(&self, req: AddVideoRequest) -> Result<Vec<ItemView>, String> {
+        let url = req.url.trim().to_string();
+        url::Url::parse(&url).map_err(|_| format!("Not a valid address: {url}"))?;
+        let entries = if req.playlist {
+            video::playlist_entries(&self.inner.tools, &url).await?
+        } else {
+            vec![video::Entry { url: url.clone(), title: req.title.clone(), duration: req.duration, thumbnail: req.thumbnail.clone() }]
+        };
+        if entries.is_empty() {
+            return Err("The playlist has no videos".into());
+        }
+        let audio = matches!(req.option.choice, video::Choice::Audio { .. });
+        let category = if audio { "music" } else { "video" }.to_string();
+        let settings = self.settings();
+        let save_dir = req.save_dir.clone().filter(|d| !d.trim().is_empty()).unwrap_or_else(|| {
+            let base = PathBuf::from(&settings.download_dir);
+            match (settings.category_folders, folder_for(&category)) {
+                (true, Some(f)) => base.join(f).to_string_lossy().into_owned(),
+                _ => base.to_string_lossy().into_owned(),
+            }
+        });
+        let mut views = Vec::with_capacity(entries.len());
+        for e in entries {
+            // One video: the exact formats picked. A playlist: the same choice, per video.
+            let selector = if req.playlist { video::generic_selector(&req.option.choice) } else { req.option.selector.clone() };
+            let spec = VideoSpec {
+                choice: req.option.choice.clone(),
+                selector,
+                ext: req.option.ext.clone(),
+                quality: req.option.label.clone(),
+                title: e.title.clone(),
+                channel: req.channel.clone(),
+                duration: e.duration,
+                site: req.site.clone(),
+                thumb: None,
+                partials: vec![],
+                retries: 0,
+            };
+            let view = {
+                let mut st = self.inner.state.lock();
+                let position = st.next_position;
+                st.next_position += 1;
+                let item = Item {
+                    id: format!("{:x}{:04x}", now_ms(), fastrand::u16(..)),
+                    url: e.url.clone(),
+                    file_name: format!("{}.{}", sanitize_file_name(&e.title), spec.ext),
+                    save_dir: save_dir.clone(),
+                    file_path: None,
+                    size: if req.playlist { None } else { req.option.size },
+                    downloaded: 0,
+                    status: if req.start { Status::Queued } else { Status::Paused },
+                    category: category.clone(),
+                    added_at: now_ms(),
+                    finished_at: None,
+                    error: None,
+                    connections: 1,
+                    resumable: true,
+                    headers: vec![],
+                    resume: None,
+                    position,
+                    name_fixed: false,
+                    allow_html: false,
+                    kind: Kind::Video,
+                    video: Some(spec),
+                };
+                let _ = self.inner.db.lock().save_item(&item);
+                let view = ItemView::from(&item);
+                st.items.insert(item.id.clone(), item);
+                view
+            };
+            (self.inner.emit)(CoreEvent::Upsert { item: view.clone() });
+            if let Some(t) = e.thumbnail {
+                let inner = self.inner.clone();
+                let id = view.id.clone();
+                tokio::spawn(async move { inner.fetch_thumbnail(&id, &t).await });
+            }
+            views.push(view);
+        }
+        self.inner.schedule();
+        Ok(views)
+    }
+
+    /// The stored thumbnail of a video item, as a data: URI (the page's CSP allows only those).
+    pub fn thumbnail(&self, id: &str) -> Option<String> {
+        use base64::Engine as _;
+        let name = self.inner.state.lock().items.get(id)?.video.as_ref()?.thumb.clone()?;
+        let bytes = std::fs::read(self.inner.data_dir.join("thumbs").join(&name)).ok()?;
+        let mime = if name.ends_with(".png") { "image/png" } else if name.ends_with(".webp") { "image/webp" } else { "image/jpeg" };
+        Some(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    }
+
     pub fn pause(&self, ids: &[String]) {
         let mut changed = Vec::new();
         {
             let mut st = self.inner.state.lock();
             for id in ids {
                 if let Some(r) = st.running.get(id) {
-                    r.handle.pause(); // becomes Paused when the job stops
+                    r.job.pause(); // becomes Paused when the job stops
                 } else if let Some(item) = st.items.get_mut(id) {
                     if item.status == Status::Queued {
                         item.status = Status::Paused;
@@ -210,6 +354,9 @@ impl Manager {
                     if matches!(item.status, Status::Paused | Status::Failed) {
                         item.status = Status::Queued;
                         item.error = None;
+                        if let Some(v) = item.video.as_mut() {
+                            v.retries = 0;
+                        }
                         changed.push(item.clone());
                     }
                 }
@@ -242,6 +389,11 @@ impl Manager {
                     if let Some(r) = item.resume.take() {
                         let _ = std::fs::remove_file(part_path(&r.file_path));
                     }
+                    if let Some(v) = item.video.as_mut() {
+                        v.partials.clear();
+                        v.retries = 0;
+                        let _ = std::fs::remove_dir_all(video_work_dir(&item.save_dir, &item.id));
+                    }
                     item.downloaded = 0;
                     item.size = None;
                     item.error = None;
@@ -266,10 +418,11 @@ impl Manager {
                 let Some(item) = st.items.remove(id) else { continue };
                 let part = item.resume.as_ref().map(|r| part_path(&r.file_path));
                 let finished = (item.status == Status::Done).then(|| item.file_path.clone()).flatten();
-                match running {
-                    Some(r) => {
-                        r.handle.cancel();
-                        let h = r.handle.clone();
+                let work = item.video.as_ref().map(|_| video_work_dir(&item.save_dir, &item.id));
+                let jobs_dir = Path::new(&item.save_dir).join(WORK_DIR);
+                match running.map(|r| r.job) {
+                    Some(Job::Http(h)) => {
+                        h.cancel();
                         tokio::spawn(async move {
                             let _ = h.wait().await;
                             if let Some(path) = h.snapshot().file_path {
@@ -277,9 +430,23 @@ impl Manager {
                             }
                         });
                     }
+                    Some(Job::Video(v)) => {
+                        v.cancel();
+                        tokio::spawn(async move {
+                            let _ = v.wait().await;
+                            if let Some(w) = work {
+                                let _ = tokio::fs::remove_dir_all(w).await;
+                            }
+                            remove_if_empty(&jobs_dir);
+                        });
+                    }
                     None => {
                         if let Some(p) = part {
                             let _ = std::fs::remove_file(p);
+                        }
+                        if let Some(w) = work {
+                            let _ = std::fs::remove_dir_all(w);
+                            remove_if_empty(&jobs_dir);
                         }
                     }
                 }
@@ -338,12 +505,43 @@ impl Inner {
                     break;
                 }
                 let item = st.items.get_mut(&id).unwrap();
+                if item.kind == Kind::Video {
+                    let Some(spec) = item.video.clone() else { continue };
+                    if !self.tools.ready() {
+                        item.status = Status::Failed;
+                        item.error = Some("Video tools are not installed; add a video link to get them".into());
+                        started.push(item.clone());
+                        continue;
+                    }
+                    // yt-dlp works in a folder of its own: it skips (and with -x even deletes) any
+                    // file that already has the name it wants, so it never sees the user's files.
+                    let work = video_work_dir(&item.save_dir, &item.id);
+                    let _ = std::fs::create_dir_all(&work);
+                    hide(&Path::new(&item.save_dir).join(WORK_DIR));
+                    let args = video::download_args(&self.tools, &spec, &item.url, &work);
+                    let job = VideoJob::start(self.tools.yt_dlp(), args);
+                    item.status = Status::Downloading;
+                    item.error = None;
+                    started.push(item.clone());
+                    let (j, me, id2) = (job.clone(), self.clone(), id.clone());
+                    tokio::spawn(async move {
+                        let result = j.wait().await;
+                        me.finished_video(&id2, &j, result);
+                    });
+                    let downloaded = item.downloaded;
+                    st.running.insert(
+                        id,
+                        Running { job: Job::Video(job), last_bytes: downloaded, last_at: Instant::now(), speed: 0.0, parts: HashMap::new() },
+                    );
+                    continue;
+                }
                 let req = DownloadRequest {
                     url: item.url.clone(),
                     headers: item.headers.clone(),
                     save_dir: PathBuf::from(&item.save_dir),
                     file_name: item.name_fixed.then(|| item.file_name.clone()),
                     connections: item.connections as usize,
+                    allow_html: item.allow_html,
                 };
                 let handle = self.engine.start(req, item.resume.clone(), vec![]);
                 item.status = Status::Downloading;
@@ -359,7 +557,7 @@ impl Inner {
                 let downloaded = item.downloaded;
                 st.running.insert(
                     id,
-                    Running { handle, last_bytes: downloaded, last_at: Instant::now(), speed: 0.0, parts: HashMap::new() },
+                    Running { job: Job::Http(handle), last_bytes: downloaded, last_at: Instant::now(), speed: 0.0, parts: HashMap::new() },
                 );
             }
         }
@@ -414,6 +612,104 @@ impl Inner {
         self.schedule();
     }
 
+    fn finished_video(self: &Arc<Self>, id: &str, job: &VideoJob, result: Result<PathBuf, VideoError>) {
+        let (item, completed) = {
+            let mut st = self.state.lock();
+            st.running.remove(id);
+            let Some(item) = st.items.get_mut(id) else { return };
+            let vs = job.state();
+            let mut completed = false;
+            match result {
+                Ok(made) => {
+                    // Move the finished file next to the user's files, never over one.
+                    let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| item.file_name.clone());
+                    let dest = unique_path(Path::new(&item.save_dir), &name);
+                    let path = match std::fs::rename(&made, &dest) {
+                        Ok(()) => dest,
+                        Err(_) => made, // another drive or locked: leave it where yt-dlp made it
+                    };
+                    if path.parent() != Some(video_work_dir(&item.save_dir, &item.id).as_path()) {
+                        let _ = std::fs::remove_dir_all(video_work_dir(&item.save_dir, &item.id));
+                        remove_if_empty(&Path::new(&item.save_dir).join(WORK_DIR));
+                    }
+                    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(vs.known_total());
+                    item.status = Status::Done;
+                    item.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    item.file_path = Some(path.to_string_lossy().into_owned());
+                    item.size = Some(size);
+                    item.downloaded = size;
+                    item.finished_at = Some(now_ms());
+                    item.error = None;
+                    if let Some(v) = item.video.as_mut() {
+                        v.partials.clear();
+                        v.retries = 0;
+                    }
+                    completed = true;
+                }
+                Err(e) => {
+                    if !vs.streams.is_empty() {
+                        item.downloaded = vs.downloaded();
+                    }
+                    if let Some(v) = item.video.as_mut() {
+                        for p in vs.partials {
+                            if !v.partials.contains(&p) {
+                                v.partials.push(p);
+                            }
+                        }
+                    }
+                    match e {
+                        VideoError::Paused | VideoError::Cancelled => item.status = Status::Paused,
+                        VideoError::Failed(msg) => {
+                            // Try again by itself a couple of times; finished streams are kept.
+                            let v = item.video.as_mut();
+                            match v {
+                                Some(v) if video::is_transient(&msg) && v.retries < 2 => {
+                                    v.retries += 1;
+                                    item.status = Status::Queued;
+                                }
+                                _ => {
+                                    item.status = Status::Failed;
+                                    item.error = Some(msg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            (item.clone(), completed)
+        };
+        let _ = self.db.lock().save_item(&item);
+        let view = ItemView::from(&item);
+        (self.emit)(CoreEvent::Upsert { item: view.clone() });
+        if completed {
+            (self.emit)(CoreEvent::Completed { item: view });
+        }
+        self.schedule();
+    }
+
+    /// Store a small copy of a video's thumbnail for the list and the pass.
+    async fn fetch_thumbnail(&self, id: &str, url: &str) {
+        let Ok((bytes, ct)) = self.engine.fetch_small(url, 1 << 20).await else { return };
+        let ext = match ct.as_deref().unwrap_or("") {
+            c if c.contains("png") => "png",
+            c if c.contains("webp") => "webp",
+            _ => "jpg",
+        };
+        let dir = self.data_dir.join("thumbs");
+        let name = format!("{id}.{ext}");
+        if std::fs::create_dir_all(&dir).is_err() || std::fs::write(dir.join(&name), bytes).is_err() {
+            return;
+        }
+        let item = {
+            let mut st = self.state.lock();
+            let Some(item) = st.items.get_mut(id) else { return };
+            let Some(v) = item.video.as_mut() else { return };
+            v.thumb = Some(name);
+            item.clone()
+        };
+        self.persist_and_emit(&[item]);
+    }
+
     /// Update live numbers; returns whether anything is running.
     fn progress_tick(&self) -> bool {
         let visible = self.visible.load(Ordering::Relaxed);
@@ -436,7 +732,41 @@ impl Inner {
             let mut totals = Totals::default();
             let State { items, running, .. } = &mut *st;
             for (id, r) in running.iter_mut() {
-                let snap = r.handle.snapshot();
+                let snap = match &r.job {
+                    Job::Http(h) => h.snapshot(),
+                    Job::Video(v) => {
+                        let vs = v.state();
+                        let Some(item) = items.get_mut(id) else { continue };
+                        // A resumed job reads the page again first; keep the old figure until it reports.
+                        if !vs.streams.is_empty() {
+                            item.downloaded = vs.downloaded();
+                        }
+                        let total = item.size.unwrap_or(0).max(vs.known_total());
+                        if total > 0 {
+                            item.size = Some(total);
+                        }
+                        let speed = vs.speed.round() as u64;
+                        let left = item.size.map(|s| s.saturating_sub(item.downloaded));
+                        totals.speed += speed;
+                        totals.active += 1;
+                        totals.remaining_bytes += left.unwrap_or(0);
+                        out.push(Progress {
+                            id: id.clone(),
+                            downloaded: item.downloaded,
+                            size: item.size,
+                            speed,
+                            eta: left.filter(|_| speed > 0).map(|l| l / speed),
+                            active_connections: 1,
+                            gaps: vec![],
+                            heads: vec![],
+                            parts: vec![],
+                            parts_total: 0,
+                            file_name: item.file_name.clone(),
+                            phase: Some(vs.phase),
+                        });
+                        continue;
+                    }
+                };
                 let dt = now.duration_since(r.last_at).as_secs_f64().max(0.001);
                 let inst = snap.downloaded.saturating_sub(r.last_bytes) as f64 / dt;
                 r.speed = if r.speed == 0.0 { inst } else { r.speed * 0.7 + inst * 0.3 };
@@ -465,7 +795,15 @@ impl Inner {
                     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
                     if !name.is_empty() && name != item.file_name {
                         item.file_name = name;
-                        item.category = categorize(&item.file_name).to_string();
+                        item.category = categorize_with(&item.file_name, snap.content_type.as_deref()).to_string();
+                        renamed.push(ItemView::from(&*item));
+                    }
+                }
+                // A name without a telling extension: let the server's Content-Type decide.
+                if item.category == "other" {
+                    let by_type = categorize_with(&item.file_name, snap.content_type.as_deref());
+                    if by_type != "other" {
+                        item.category = by_type.to_string();
                         renamed.push(ItemView::from(&*item));
                     }
                 }
@@ -491,6 +829,7 @@ impl Inner {
                     parts,
                     parts_total,
                     file_name: item.file_name.clone(),
+                    phase: None,
                 });
             }
             for item in items.values().filter(|i| i.status == Status::Queued) {
@@ -522,8 +861,16 @@ impl Inner {
 
     /// Persist resume points: snapshot, fsync data, then write the snapshot.
     async fn checkpoint(&self) {
-        let handles: Vec<(String, DownloadHandle)> =
-            self.state.lock().running.iter().map(|(id, r)| (id.clone(), r.handle.clone())).collect();
+        let handles: Vec<(String, DownloadHandle)> = self
+            .state
+            .lock()
+            .running
+            .iter()
+            .filter_map(|(id, r)| match &r.job {
+                Job::Http(h) => Some((id.clone(), h.clone())),
+                Job::Video(_) => None,
+            })
+            .collect();
         let mut states = Vec::with_capacity(handles.len());
         for (id, h) in handles {
             if let Some(s) = h.checkpoint().await {
@@ -543,6 +890,30 @@ impl Inner {
         };
         let _ = self.db.lock().save_items(items.iter());
     }
+}
+
+/// Where unfinished video jobs keep their pieces: `<save dir>\.dasidm\<id>`.
+const WORK_DIR: &str = ".dasidm";
+
+fn video_work_dir(save_dir: &str, id: &str) -> PathBuf {
+    Path::new(save_dir).join(WORK_DIR).join(id)
+}
+
+/// Mark a folder hidden in Explorer.
+fn hide(dir: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_HIDDEN, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW};
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    unsafe {
+        let attrs = GetFileAttributesW(wide.as_ptr());
+        if attrs != INVALID_FILE_ATTRIBUTES && attrs & FILE_ATTRIBUTE_HIDDEN == 0 {
+            SetFileAttributesW(wide.as_ptr(), attrs | FILE_ATTRIBUTE_HIDDEN);
+        }
+    }
+}
+
+fn remove_if_empty(dir: &Path) {
+    let _ = std::fs::remove_dir(dir); // fails (and does nothing) unless empty
 }
 
 /// Missing ranges and live connection heads, as fractions of the file.
@@ -567,6 +938,7 @@ fn friendly_error(e: &EngineError) -> String {
         EngineError::Http(416) => "Server refused the byte range".into(),
         EngineError::Http(code) => format!("Server error {code}"),
         EngineError::ValidatorMismatch => "File changed on the server; restart it".into(),
+        EngineError::WebPage => "This link is a web page, not a file".into(),
         EngineError::NoProgress => "Server stopped sending data".into(),
         EngineError::Network(m) => format!("Network problem: {m}"),
         EngineError::Io(m) => format!("Disk problem: {m}"),

@@ -3,8 +3,11 @@
   import { app, run } from '../lib/state.svelte';
   import { bytes, doneAt, duration, host, percent, speed, when } from '../lib/format';
   import Icon from '../lib/Icon.svelte';
-  import { CATEGORIES } from '../lib/types';
+  import { CATEGORIES, category, typeIcon } from '../lib/types';
   import PartsMap from './PartsMap.svelte';
+  import { thumbOf } from '../lib/state.svelte';
+  import { PHASE, mediaLine } from '../lib/media';
+  import { clock } from '../lib/format';
 
   const item = $derived(app.selected ? app.items[app.selected] : null);
   const p = $derived(item ? app.progress[item.id] : undefined);
@@ -13,6 +16,7 @@
   const pc = $derived(percent(loaded, size));
   const seq = $derived(item ? String(Object.values(app.items).filter((i) => i.addedAt <= item.addedAt).length).padStart(4, '0') : '');
   const catName = $derived(CATEGORIES.find((c) => c.id === item?.category)?.name ?? 'Other');
+  const ext = $derived(item?.fileName.match(/\.([a-z0-9]{1,6})$/i)?.[1].toUpperCase() ?? '');
 
 
   /** Short source code for the route line, like an airport code: releases.ubuntu.com -> UBUNTU. */
@@ -35,9 +39,22 @@
 <aside class="pass-col" aria-label="Selected download">
   {#if item}
     <article class="pass" class:failed={item.status === 'failed'}>
+      {#if item.media}
+        {@const art = thumbOf(item)}
+        {#if art}
+          <!-- Real media art is the only imagery DasIDM shows. -->
+          <img class="art" src={art} alt="" />
+        {/if}
+      {/if}
       <header>
         <div>
           <h3 title={item.fileName}>{item.fileName.replace(/([_.\-])/g, '$1​')}</h3>
+          <span class="kind"
+            ><Icon name={typeIcon(item.category)} size={14} />{category(item.category).short}{#if item.media && !item.media.audioOnly}<span class="q"
+                >{item.media.quality}</span
+              >{/if}{#if ext}<span class="ext">{ext}</span>{/if}{#if item.media?.duration}<span class="len">{clock(item.media.duration)}</span>{/if}</span
+          >
+          {#if item.media?.channel}<span class="by">{item.media.channel}</span>{/if}
         </div>
         <div class="seq">
           <span class="lbl">Seq</span>
@@ -79,7 +96,11 @@
             <b>—</b>
           {/if}
         </div>
-        <div><span class="lbl">Lines</span><b>{item.status === 'downloading' ? (p?.activeConnections ?? 0) : '—'}<span class="sub"> / {item.connections}</span></b></div>
+        {#if item.media}
+          <div><span class="lbl">Quality</span><b>{item.media.audioOnly ? item.media.format : item.media.quality}</b></div>
+        {:else}
+          <div><span class="lbl">Lines</span><b>{item.status === 'downloading' ? (p?.activeConnections ?? 0) : '—'}<span class="sub"> / {item.connections}</span></b></div>
+        {/if}
         <div><span class="lbl">Resume</span><b>{item.resumable || item.status === 'done' ? 'Yes' : 'No'}</b></div>
       </div>
 
@@ -93,13 +114,15 @@
           <span class="lbl">
             {#if item.status === 'done'}
               {catName} · all parts arrived
+            {:else if item.status === 'downloading' && p?.phase}
+              {catName} · {PHASE[p.phase]}
             {:else if item.status === 'downloading' && p}
               {catName} · {p.partsTotal} {p.partsTotal === 1 ? 'part' : 'parts'} · {p.parts.length} loading now
             {:else}
               {catName} · {pc ?? 0}% on disk
             {/if}
           </span>
-          {#if item.status === 'downloading'}
+          {#if item.status === 'downloading' && item.kind !== 'video'}
             <button class="partsbtn" onclick={() => (app.partsOpen = true)}>Open parts<kbd>P</kbd></button>
           {/if}
         </div>
@@ -246,6 +269,53 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .art {
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    max-height: 168px;
+    object-fit: cover;
+    background: #2a2f36;
+  }
+  .q,
+  .len {
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .by {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: #565d65;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .kind {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #3b4148;
+  }
+  .kind :global(svg) {
+    flex: none;
+  }
+  .ext {
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid #b9b9b1;
+    color: #565d65;
   }
   .lbl {
     font-family: var(--mono);

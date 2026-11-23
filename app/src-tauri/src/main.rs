@@ -11,6 +11,8 @@ use tauri::{AppHandle, Emitter, Manager as _, RunEvent, State, Theme, WebviewUrl
 
 struct App {
     core: Manager,
+    /// A video link from the command line, waiting for the window to show its quality picker.
+    pending_add: parking_lot::Mutex<Option<String>>,
 }
 
 type Res<T> = Result<T, String>;
@@ -106,6 +108,64 @@ fn open_folder(app: State<'_, App>, id: String) -> Res<()> {
     Ok(())
 }
 
+#[tauri::command]
+fn tools_status(app: State<'_, App>) -> das_core::tools::ToolsStatus {
+    app.core.tools_status()
+}
+
+/// Download yt-dlp, ffmpeg and deno. The UI calls this only after the user agrees.
+#[tauri::command]
+async fn install_tools(app: State<'_, App>) -> Res<()> {
+    app.core.install_tools().await
+}
+
+#[tauri::command]
+async fn update_tools(app: State<'_, App>) -> Res<bool> {
+    app.core.update_tools().await
+}
+
+#[tauri::command]
+async fn video_info(app: State<'_, App>, url: String) -> Res<das_core::video::VideoInfo> {
+    app.core.video_info(url).await
+}
+
+#[tauri::command]
+async fn add_video(app: State<'_, App>, req: das_core::model::AddVideoRequest) -> Res<Vec<ItemView>> {
+    app.core.add_video(req).await
+}
+
+#[tauri::command]
+fn thumbnail(app: State<'_, App>, id: String) -> Option<String> {
+    app.core.thumbnail(&id)
+}
+
+/// A link handed over on the command line that needs the Add sheet (video sites).
+#[tauri::command]
+fn take_pending_add(app: State<'_, App>) -> Option<String> {
+    app.pending_add.lock().take()
+}
+
+/// The first link on the clipboard, so Add URL can open prefilled.
+#[tauri::command]
+fn clipboard_link() -> Option<String> {
+    let text = arboard::Clipboard::new().ok()?.get_text().ok()?;
+    das_core::links::first_link(&text)
+}
+
+/// The native Windows folder picker, starting at `start` when it exists.
+#[tauri::command]
+async fn pick_folder(app: AppHandle, start: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file().set_title("Choose a folder");
+    if let Some(w) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&w);
+    }
+    if let Some(dir) = start.filter(|d| std::path::Path::new(d).is_dir()) {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog.blocking_pick_folder()?.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -137,14 +197,29 @@ fn show_main(app: &AppHandle) {
 
 /// Links passed on the command line (`dasidm.exe <url>…`) are added as downloads.
 fn add_urls(app: &AppHandle, args: &[String]) {
-    let urls: Vec<String> = args.iter().filter(|a| a.starts_with("http://") || a.starts_with("https://")).cloned().collect();
+    let mut urls: Vec<String> = args.iter().filter(|a| a.starts_with("http://") || a.starts_with("https://")).cloned().collect();
+    // A video page needs a quality choice: open the Add sheet with it instead of saving the page.
+    if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u)) {
+        let link = urls.remove(i);
+        *app.state::<App>().pending_add.lock() = Some(link.clone());
+        show_main(app);
+        let _ = app.emit("open-add", link);
+    }
     if urls.is_empty() {
         return;
     }
     let core = app.state::<App>().core.clone();
     tauri::async_runtime::spawn(async move {
         for url in urls {
-            let _ = core.add(AddRequest { url, file_name: None, save_dir: None, connections: None, headers: vec![], start: true });
+            let _ = core.add(AddRequest {
+                url,
+                file_name: None,
+                save_dir: None,
+                connections: None,
+                headers: vec![],
+                start: true,
+                allow_page: false,
+            });
         }
     });
 }
@@ -159,6 +234,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let start_hidden = args.iter().any(|a| a == "--background");
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // A second launch hands its links to the running DasIDM.
             add_urls(app, &args);
@@ -180,7 +256,16 @@ fn main() {
             get_settings,
             set_settings,
             open_file,
-            open_folder
+            open_folder,
+            clipboard_link,
+            pick_folder,
+            take_pending_add,
+            tools_status,
+            install_tools,
+            update_tools,
+            video_info,
+            add_video,
+            thumbnail
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -200,7 +285,7 @@ fn main() {
                 tauri::async_runtime::block_on(async move { c.set_settings(s) })?;
             }
             tauri::async_runtime::spawn(core.clone().run());
-            app.manage(App { core });
+            app.manage(App { core, pending_add: parking_lot::Mutex::new(None) });
             add_urls(&handle, &args);
 
             let open = MenuItem::with_id(app, "open", "Open DasIDM", true, None::<&str>)?;

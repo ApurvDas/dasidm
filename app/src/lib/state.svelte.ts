@@ -1,8 +1,8 @@
 import { api } from './api';
-import type { CoreEvent, ItemView, Progress, Settings, Status, Totals } from './types';
+import type { CoreEvent, ItemView, Progress, Settings, Status, ToolsStatus, Totals } from './types';
 
 export type Filter = 'all' | 'active' | 'queued' | 'paused' | 'done' | 'failed';
-export type SortKey = 'name' | 'size' | 'status' | 'added';
+export type SortKey = 'name' | 'type' | 'size' | 'status' | 'added';
 
 const HISTORY = 240; // 60 s at 4 Hz
 
@@ -27,7 +27,25 @@ export const app = $state({
   partsOpen: false,
   /** Per download: stable part numbers (by start byte) and parts that were just split off. */
   partMeta: {} as Record<string, PartMeta>,
+  /** yt-dlp, ffmpeg and deno: needed for video and music links. */
+  tools: null as ToolsStatus | null,
+  /** Thumbnails of video items, fetched once (data: URIs). */
+  thumbs: {} as Record<string, string>,
 });
+
+const asked = new Set<string>();
+/** The thumbnail for a video item, fetched on first use. */
+export function thumbOf(item: ItemView): string | null {
+  if (!item.media?.thumb) return null;
+  if (app.thumbs[item.id]) return app.thumbs[item.id];
+  if (!asked.has(item.id)) {
+    asked.add(item.id);
+    api.thumbnail(item.id).then((t) => {
+      if (t) app.thumbs[item.id] = t;
+    });
+  }
+  return null;
+}
 
 export interface PartMeta {
   next: number;
@@ -88,12 +106,16 @@ function onEvent(e: CoreEvent) {
     case 'completed':
       app.lit[e.item.id] = 'done';
       break;
+    case 'tools':
+      app.tools = e.status;
+      break;
     case 'removed':
       for (const id of e.ids) {
         delete app.items[id];
         delete app.progress[id];
         delete app.lit[id];
         delete app.partMeta[id];
+        delete app.thumbs[id];
         if (app.selected === id) {
           app.selected = null;
           app.partsOpen = false;
@@ -117,7 +139,13 @@ function onEvent(e: CoreEvent) {
 
 export async function init() {
   await api.listen(onEvent);
-  const [list, settings, history] = await Promise.all([api.list(), api.settings(), api.history().catch(() => [])]);
+  const [list, settings, history, tools] = await Promise.all([
+    api.list(),
+    api.settings(),
+    api.history().catch(() => []),
+    api.toolsStatus().catch(() => null),
+  ]);
+  app.tools = tools;
   const map: Record<string, ItemView> = {};
   for (const i of list) map[i.id] = i;
   app.items = map;

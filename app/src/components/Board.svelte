@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { flip } from 'svelte/animate';
+  import { PHASE_BOARD, isPostPhase } from '../lib/media';
+  import { flip, type FlipParams } from 'svelte/animate';
   import { app, select, seen } from '../lib/state.svelte';
   import { bytes, doneAt, percent, speed, speedParts } from '../lib/format';
   import SegStrip from '../lib/SegStrip.svelte';
@@ -18,6 +19,14 @@
   let rankedOnEta: Record<string, boolean> = {};
   const etaSince: Record<string, number> = {};
   const fade: Record<string, ReturnType<typeof setTimeout>> = {};
+
+  /** Glide rows that changed places; a row whose size changed moved because the layout did
+   *  (window maximised or resized), and gliding it from the old layout would squash the board. */
+  function reorder(node: Element, rects: { from: DOMRect; to: DOMRect }, params: FlipParams) {
+    const { from, to } = rects;
+    if (Math.abs(from.height - to.height) > 0.5 || Math.abs(from.width - to.width) > 0.5) return { duration: 0 };
+    return flip(node, rects, params);
+  }
 
   function rank() {
     const loading = Object.values(app.items).filter((i) => i.status === 'downloading');
@@ -114,6 +123,11 @@
     const p = app.progress[i.id];
     const pc = pctOf(i);
     if (!online) return pc == null ? 'NO NETWORK' : `NO NETWORK · ${pc}%`;
+    if (i.kind === 'video') {
+      if (p?.phase && isPostPhase(p.phase)) return PHASE_BOARD[p.phase];
+      if (!p || p.speed === 0) return pc == null ? 'STARTING' : `STARTING · ${pc}%`;
+      return `${pc ?? '··'}% · ${(i.media?.audioOnly ? i.media.format : i.media?.quality ?? '').toUpperCase()}`;
+    }
     if (!p || p.speed === 0) return pc == null ? 'CONNECTING' : `CONNECTING · ${pc}%`;
     return `${pc ?? '··'}% · ${p.activeConnections} ${p.activeConnections === 1 ? 'LINE' : 'LINES'}`;
   }
@@ -158,7 +172,7 @@
         class:lit={app.lit[i.id] === 'moved'}
         class:waiting={i.status === 'queued'}
         class:sel={app.selected === i.id}
-        animate:flip={{ duration: reducedMotion() ? 0 : 520, easing: (t) => 1 - Math.pow(1 - t, 4) }}
+        animate:reorder={{ duration: reducedMotion() ? 0 : 520, easing: (t) => 1 - Math.pow(1 - t, 4) }}
         onclick={() => select(i.id)}
         onpointerenter={() => seen(i.id)}
       >

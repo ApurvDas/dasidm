@@ -6,3 +6,4 @@ app/src-tauri/gen/
 .impeccable/reference/
 extension/dist/
 extension/node_modules/
+extension/firefox/.amo-upload-uuid

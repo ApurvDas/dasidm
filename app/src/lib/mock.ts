@@ -121,7 +121,7 @@ const tv = (over: Partial<NonNullable<ItemView['torrent']>> = {}) => ({ infoHash
 items.push(
   item({
     id: 't1', fileName: MOVIE, status: 'downloading', category: 'torrents', size: 7.4 * GB, downloaded: 3.1 * GB,
-    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:c0ffee', torrent: tv({ files: 10, chosenFiles: 9, uploaded: 410 * MB, ratio: 0.05 }),
+    kind: 'torrent', connections: 0, url: 'magnet:?xt=urn:btih:c0ffee', torrent: tv({ files: 13, chosenFiles: 12, uploaded: 410 * MB, ratio: 0.05 }),
   }),
   item({
     id: 't2', fileName: 'field-recordings-48k.flac', status: 'done', category: 'torrents', size: 840 * MB, downloaded: 840 * MB,
@@ -151,9 +151,13 @@ const mockFiles = (
     ['Sample\\sample.mkv', 64 * MB, 0],
     ['poster.jpg', 1.4 * MB, 1],
     ['README.txt', 4 * 1024, 1],
+    // Stills as uploaders add them: long names that only differ at the end.
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Media Info.txt', 26 * 1024, 1],
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Screenshot 01.png', 10.6 * MB, 1],
+    ['Stills + Media Info\\Sprite Fright (2021) [2160p HDR] - Screenshot 02.png', 11.9 * MB, 0.5],
   ] as const
 ).map(([path, size, done], index) => ({ index, path: `${MOVIE}\\${path}`, size, done: size * done }));
-let mockChosen: number[] | null = [0, 1, 2, 3, 4, 5, 6, 8, 9];
+let mockChosen: number[] | null = [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12];
 
 // ?empty previews the first run: no downloads at all.
 if (new URLSearchParams(location.search).has('empty')) {

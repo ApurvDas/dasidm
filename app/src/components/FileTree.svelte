@@ -105,6 +105,29 @@
   }
   const pct = (done: number, size: number) => (size ? Math.floor((done / size) * 100) : 100);
   const leaf = (path: string) => path.split(/[\\/]/).pop() ?? path;
+
+  /** The torrent's main video: the biggest one. Its level lists files before folders, with it
+   * on top, so the episode or film is never hidden under a folder of extras. */
+  const main = $derived.by(() => {
+    let best: TorrentFile | null = null;
+    for (const f of files) if (categorize(leaf(f.path)) === 'video' && (!best || f.size > best.size)) best = f;
+    return best;
+  });
+  const filesOf = (node: Folder) => {
+    const m = main;
+    return m && node.files.includes(m) ? [m, ...node.files.filter((f) => f !== m)] : node.files;
+  };
+
+  /** Long names keep their ending (e.g. "…Scr 01.png") so the kind of file always shows. */
+  function ends(name: string) {
+    const dot = name.lastIndexOf('.');
+    if (name.length <= 28) return { head: name, tail: '' };
+    let at = name.length - Math.min(name.length, (dot > 0 ? name.length - dot : 0) + 10);
+    // Start the ending at a word ("Screenshot 01.png", not "eenshot 01.png").
+    const word = Math.max(name.lastIndexOf(' ', at), name.lastIndexOf('-', at), name.lastIndexOf('_', at));
+    if (word > 0 && at - word <= 12) at = word + 1;
+    return { head: name.slice(0, at), tail: name.slice(at) };
+  }
 </script>
 
 {#snippet meter(done: number, size: number, skipped: boolean)}
@@ -118,6 +141,16 @@
 {/snippet}
 
 {#snippet level(node: Folder, depth: number)}
+  {#if main && node.files.includes(main)}
+    {@render fileRows(node, depth)}
+    {@render folderRows(node, depth)}
+  {:else}
+    {@render folderRows(node, depth)}
+    {@render fileRows(node, depth)}
+  {/if}
+{/snippet}
+
+{#snippet folderRows(node: Folder, depth: number)}
   {#each node.folders as d (d.key)}
     {@const open = !shut.has(d.key)}
     {@const s = sums(d.all)}
@@ -143,17 +176,21 @@
     </div>
     {#if open}{@render level(d, depth + 1)}{/if}
   {/each}
-  {#each node.files as f (f.index)}
+{/snippet}
+
+{#snippet fileRows(node: Folder, depth: number)}
+  {#each filesOf(node) as f (f.index)}
     {@const name = leaf(f.path)}
+    {@const n = ends(name)}
     {@const off = !isOn(f)}
-    <label class="row" class:off class:pick={editable}>
+    <label class="row" class:off class:pick={editable} class:main={f === main}>
       <span class="ind" style:width="{depth * 18}px"></span>
       <span class="chev"></span>
       {#if editable}
         <input type="checkbox" checked={!off} onchange={() => setMany([f], off)} />
       {/if}
       <span class="ico"><Icon name={typeIcon(categorize(name))} size={14} /></span>
-      <span class="name" title={f.path}>{name}</span>
+      <span class="name split" title={f.path}><span class="h">{n.head}</span>{#if n.tail}<span class="t">{n.tail}</span>{/if}</span>
       {#if progress}{@render meter(f.done, f.size, off)}{/if}
       <span class="size">{bytes(f.size)}</span>
     </label>
@@ -239,6 +276,28 @@
     white-space: nowrap;
   }
   .name b {
+    font-weight: 600;
+  }
+  /* The start of a long name gives way; its ending (number and extension) stays. */
+  .name.split {
+    display: flex;
+    min-width: 0;
+  }
+  .name.split .h {
+    flex: 0 1000 auto;
+    min-width: 2ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+  }
+  .name.split .t {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+  }
+  .main .name {
     font-weight: 600;
   }
   .cnt {

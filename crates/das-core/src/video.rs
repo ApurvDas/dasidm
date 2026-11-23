@@ -119,6 +119,9 @@ pub fn is_video_site(link: &str) -> bool {
 
 fn base_args(tools: &Tools) -> Vec<String> {
     vec![
+        // Our output templates are read back as UTF-8; titles hold any character.
+        "--encoding".into(),
+        "utf-8".into(),
         "--ffmpeg-location".into(),
         tools.ffmpeg_dir().to_string_lossy().into_owned(),
         "--js-runtimes".into(),

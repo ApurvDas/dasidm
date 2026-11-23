@@ -97,6 +97,20 @@ impl Manager {
             if item.status == Status::Downloading {
                 item.status = Status::Queued;
             }
+            // A finished video left in its work folder (older versions could lose the real file
+            // name): move it next to the user's files now.
+            if item.kind == Kind::Video && item.status == Status::Done {
+                let stuck = item.file_path.as_deref().is_none_or(|p| !Path::new(p).is_file() || Path::new(p).components().any(|c| c.as_os_str() == WORK_DIR));
+                if stuck && video_work_dir(&item.save_dir, &item.id).is_dir() {
+                    let made = item.file_path.clone().map(PathBuf::from).unwrap_or_default();
+                    let path = place_video(&item.save_dir, &item.id, &made);
+                    if path.is_file() {
+                        item.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        item.file_path = Some(path.to_string_lossy().into_owned());
+                        let _ = db.save_item(&item);
+                    }
+                }
+            }
             state.next_position = state.next_position.max(item.position + 1);
             state.items.insert(item.id.clone(), item);
         }
@@ -669,17 +683,7 @@ impl Inner {
             let mut completed = false;
             match result {
                 Ok(made) => {
-                    // Move the finished file next to the user's files, never over one.
-                    let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| item.file_name.clone());
-                    let dest = unique_path(Path::new(&item.save_dir), &name);
-                    let path = match std::fs::rename(&made, &dest) {
-                        Ok(()) => dest,
-                        Err(_) => made, // another drive or locked: leave it where yt-dlp made it
-                    };
-                    if path.parent() != Some(video_work_dir(&item.save_dir, &item.id).as_path()) {
-                        let _ = std::fs::remove_dir_all(video_work_dir(&item.save_dir, &item.id));
-                        remove_if_empty(&Path::new(&item.save_dir).join(WORK_DIR));
-                    }
+                    let path = place_video(&item.save_dir, &item.id, &made);
                     let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(vs.known_total());
                     item.status = Status::Done;
                     item.file_name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -955,6 +959,46 @@ fn video_work_dir(save_dir: &str, id: &str) -> PathBuf {
     Path::new(save_dir).join(WORK_DIR).join(id)
 }
 
+/// The finished media file in a video job's work folder: the biggest file that is not a
+/// partial download, a resume note or a leftover thumbnail.
+fn finished_media(work: &Path) -> Option<PathBuf> {
+    let skip = [".part", ".ytdl", ".temp", ".tmp", ".jpg", ".jpeg", ".png", ".webp"];
+    std::fs::read_dir(work)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().to_ascii_lowercase();
+            !skip.iter().any(|s| n.ends_with(s)) && !n.contains(".part-frag")
+        })
+        .max_by_key(|e| e.metadata().map(|m| m.len()).unwrap_or(0))
+        .map(|e| e.path())
+}
+
+/// Move a finished video from its work folder next to the user's files, under a free name, and
+/// clean the work folder up. Returns where the file is now.
+///
+/// The path yt-dlp reports is a hint only: characters it substitutes in file names (a title's
+/// `|` becomes `｜`) can be lost on the way back, so the real file is looked up in the folder.
+fn place_video(save_dir: &str, id: &str, reported: &Path) -> PathBuf {
+    let work = video_work_dir(save_dir, id);
+    let made = if reported.is_file() { reported.to_path_buf() } else { finished_media(&work).unwrap_or_else(|| reported.to_path_buf()) };
+    if !made.is_file() {
+        return made;
+    }
+    let name = made.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "video".into());
+    let dest = unique_path(Path::new(save_dir), &name);
+    let moved = std::fs::rename(&made, &dest).is_ok()
+        // Locked for a moment (a virus scan) or another drive: copy, then drop the original.
+        || (std::fs::copy(&made, &dest).is_ok() && std::fs::remove_file(&made).map(|_| true).unwrap_or(true));
+    if !moved {
+        return made; // still usable where it is; never lost
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    remove_if_empty(&Path::new(save_dir).join(WORK_DIR));
+    dest
+}
+
 /// Mark a folder hidden in Explorer.
 fn hide(dir: &Path) {
     use std::os::windows::ffi::OsStrExt;
@@ -999,5 +1043,35 @@ fn friendly_error(e: &EngineError) -> String {
         EngineError::Network(m) => format!("Network problem: {m}"),
         EngineError::Io(m) => format!("Disk problem: {m}"),
         other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finished_video_is_moved_even_when_its_reported_name_is_wrong() {
+        let tmp = tempfile::tempdir().unwrap();
+        let save = tmp.path().to_string_lossy().into_owned();
+        let work = video_work_dir(&save, "job1");
+        std::fs::create_dir_all(&work).unwrap();
+        // What yt-dlp wrote (with the full-width bar) and leftovers beside it.
+        let real = work.join("Trailer ｜ Cast.mkv");
+        std::fs::write(&real, vec![1u8; 4096]).unwrap();
+        std::fs::write(work.join("Trailer ｜ Cast.f251.webm.part"), vec![0u8; 8192]).unwrap();
+        std::fs::write(work.join("Trailer ｜ Cast.webp"), vec![0u8; 100]).unwrap();
+        // A file with the same name already in the folder must not be overwritten.
+        std::fs::write(tmp.path().join("Trailer ｜ Cast.mkv"), b"mine").unwrap();
+
+        // The path as an older yt-dlp output decoding reported it: the bar is gone.
+        let reported = work.join("Trailer  Cast.mkv");
+        let placed = place_video(&save, "job1", &reported);
+
+        assert_eq!(placed, tmp.path().join("Trailer ｜ Cast (1).mkv"));
+        assert_eq!(std::fs::read(&placed).unwrap().len(), 4096);
+        assert_eq!(std::fs::read(tmp.path().join("Trailer ｜ Cast.mkv")).unwrap(), b"mine");
+        assert!(!work.exists(), "the work folder is cleaned up");
+        assert!(!tmp.path().join(WORK_DIR).exists());
     }
 }

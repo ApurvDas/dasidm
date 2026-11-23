@@ -25,6 +25,8 @@ export const app = $state({
   toast: null as string | null,
   /** Full-width parts view for the selected download. */
   partsOpen: false,
+  /** The tab the torrent view opens on. */
+  torrentTab: 'files' as 'trackers' | 'files' | 'pieces',
   /** Per download: stable part numbers (by start byte) and parts that were just split off. */
   partMeta: {} as Record<string, PartMeta>,
   /** yt-dlp, ffmpeg and deno: needed for video and music links. */

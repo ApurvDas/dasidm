@@ -5,17 +5,18 @@
   import { app, run, toast } from '../lib/state.svelte';
   import { arrive } from '../lib/motion';
   import { bytes, doneAt, duration, percent, speed } from '../lib/format';
-  import { categorize } from '../lib/media';
   import Icon from '../lib/Icon.svelte';
+  import FileTree from './FileTree.svelte';
   import PieceMap from './PieceMap.svelte';
-  import { typeIcon, type TorrentFile, type TrackerState, type TrackerView } from '../lib/types';
+  import type { TorrentFile, TrackerState, TrackerView } from '../lib/types';
 
   const item = $derived(app.selected ? app.items[app.selected] : null);
   const p = $derived(item ? app.progress[item.id] : undefined);
   const live = $derived(p?.torrent);
   const size = $derived(p?.size ?? item?.size ?? 0);
   const loaded = $derived(p?.downloaded ?? item?.downloaded ?? 0);
-  let tab = $state<'trackers' | 'files' | 'pieces'>('trackers');
+  // Opens on what is being downloaded; the Pass can ask for another tab.
+  let tab = $state<'trackers' | 'files' | 'pieces'>(app.torrentTab);
 
   // ---- trackers (polled while this view is open) ----
   let trackers = $state<TrackerView[]>([]);
@@ -113,12 +114,6 @@
     };
   });
   const dirty = $derived(chosen.size !== saved.size || [...chosen].some((i) => !saved.has(i)));
-  function toggle(i: number) {
-    const n = new Set(chosen);
-    if (n.has(i)) n.delete(i);
-    else n.add(i);
-    chosen = n;
-  }
   async function saveFiles() {
     if (!item) return;
     const ok = await run(api.setTorrentFiles(item.id, [...chosen]).then(() => true));
@@ -127,10 +122,6 @@
       toast('File choice saved');
     }
   }
-  const shortPath = (path: string) => {
-    const parts = path.split('\\');
-    return parts.length > 1 && parts[0] === item?.fileName ? parts.slice(1).join('\\') : path;
-  };
 
   function close() {
     app.partsOpen = false;
@@ -229,18 +220,9 @@
       </div>
     </div>
   {:else if tab === 'files'}
-    <div class="cols cap fl" role="row"><span></span><span>File</span><span>On disk</span><span class="r">Done</span><span class="r">Size</span></div>
-    <div class="rows" role="group" aria-label="Files">
-      {#each files as f (f.index)}
-        {@const pc = f.size ? Math.floor((f.done / f.size) * 100) : 100}
-        <label class="row fl" class:off={!chosen.has(f.index)}>
-          <input type="checkbox" checked={chosen.has(f.index)} onchange={() => toggle(f.index)} />
-          <span class="url"><Icon name={typeIcon(categorize(f.path))} size={14} />{shortPath(f.path)}</span>
-          <span class="track"><span class="fill" style:width="{pc}%"></span></span>
-          <span class="r">{pc}%</span>
-          <span class="r">{bytes(f.size)}</span>
-        </label>
-      {/each}
+    <div class="cols cap fl" role="row"><span>Folders and files · {bytes(files.filter((f) => chosen.has(f.index)).reduce((a, f) => a + f.size, 0))} chosen</span><span class="r">On disk</span><span class="r">Size</span></div>
+    <div class="rows">
+      <FileTree {files} root={item?.fileName} bind:chosen editable progress showRoot />
     </div>
     <div class="addbar files">
       <span class="hint">Skipped files are not downloaded; their pieces that touch chosen files still arrive.</span>
@@ -371,8 +353,11 @@
   .trk {
     grid-template-columns: 118px minmax(0, 1fr) 36px 56px 56px 48px 88px 64px;
   }
-  .fl {
-    grid-template-columns: 14px minmax(0, 1fr) minmax(90px, 0.35fr) 48px 80px;
+  /* Lines up with FileTree's meter (84 + 8 + 44) and size (70) columns. */
+  .cols.fl {
+    grid-template-columns: minmax(0, 1fr) 136px 70px;
+    column-gap: 8px;
+    padding: 0 12px 0 6px;
   }
   .cols {
     height: 26px;
@@ -499,28 +484,6 @@
     font-family: var(--mono);
     font-stretch: 75%;
     font-size: 13px;
-  }
-  .row.off {
-    color: var(--steel);
-  }
-  .row input[type='checkbox'] {
-    accent-color: var(--ivory);
-    width: 14px;
-    height: 14px;
-  }
-  label.row {
-    cursor: pointer;
-  }
-  .track {
-    height: 6px;
-    border-radius: 3px;
-    background: rgb(255 255 255 / 0.07);
-    overflow: hidden;
-  }
-  .fill {
-    display: block;
-    height: 100%;
-    background: rgb(242 242 238 / 0.82);
   }
   .none {
     padding: 24px 10px;

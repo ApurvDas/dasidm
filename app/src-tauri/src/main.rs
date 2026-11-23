@@ -139,6 +139,107 @@ fn thumbnail(app: State<'_, App>, id: String) -> Option<String> {
     app.core.thumbnail(&id)
 }
 
+// ---- Torrents ------------------------------------------------------------------------
+
+#[tauri::command]
+async fn torrent_preview(app: State<'_, App>, link: Option<String>, path: Option<String>) -> Res<das_core::TorrentPreview> {
+    app.core.torrent_preview(link, path).await
+}
+
+#[tauri::command]
+async fn add_torrent(app: State<'_, App>, req: das_core::model::AddTorrentRequest) -> Res<ItemView> {
+    app.core.add_torrent(req).await
+}
+
+#[tauri::command]
+fn torrent_trackers(app: State<'_, App>, id: String) -> Vec<das_core::TrackerView> {
+    app.core.torrent_trackers(&id)
+}
+
+#[tauri::command]
+fn add_trackers(app: State<'_, App>, id: String, urls: Vec<String>) -> Res<usize> {
+    app.core.add_trackers(&id, urls)
+}
+
+#[tauri::command]
+fn remove_trackers(app: State<'_, App>, id: String, urls: Vec<String>) -> Res<usize> {
+    app.core.remove_trackers(&id, urls)
+}
+
+#[tauri::command]
+fn replace_tracker(app: State<'_, App>, id: String, old: String, new: String) -> Res<()> {
+    app.core.replace_tracker(&id, old, new)
+}
+
+#[tauri::command]
+fn reannounce(app: State<'_, App>, id: String) -> Res<()> {
+    app.core.reannounce(&id)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TorrentFiles {
+    files: Vec<das_core::FileEntry>,
+    chosen: Option<Vec<usize>>,
+}
+
+#[tauri::command]
+fn torrent_files(app: State<'_, App>, id: String) -> TorrentFiles {
+    let (files, chosen) = app.core.torrent_files(&id);
+    TorrentFiles { files, chosen }
+}
+
+#[tauri::command]
+async fn set_torrent_files(app: State<'_, App>, id: String, only: Vec<usize>) -> Res<()> {
+    app.core.set_torrent_files(&id, only).await
+}
+
+#[tauri::command]
+fn seed(app: State<'_, App>, ids: Vec<String>) {
+    app.core.seed(&ids);
+}
+
+/// The Windows file picker for a .torrent file.
+#[tauri::command]
+async fn pick_torrent_file(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file().set_title("Open a .torrent file").add_filter("Torrent files", &["torrent"]);
+    if let Some(w) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&w);
+    }
+    dialog.blocking_pick_file()?.into_path().ok().map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Make DasIDM open magnet links and .torrent files (for this Windows user only).
+#[tauri::command]
+fn register_torrent_handler() -> Res<()> {
+    use std::os::windows::process::CommandExt;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let open = format!("\"{}\" \"%1\"", exe.display());
+    let keys: [(&str, Option<&str>, &str); 6] = [
+        (r"HKCU\Software\Classes\magnet", None, "URL:Magnet link"),
+        (r"HKCU\Software\Classes\magnet", Some("URL Protocol"), ""),
+        (r"HKCU\Software\Classes\magnet\shell\open\command", None, open.as_str()),
+        (r"HKCU\Software\Classes\DasIDM.torrent", None, "Torrent file"),
+        (r"HKCU\Software\Classes\DasIDM.torrent\shell\open\command", None, open.as_str()),
+        (r"HKCU\Software\Classes\.torrent", None, "DasIDM.torrent"),
+    ];
+    for (key, name, value) in keys {
+        let mut cmd = std::process::Command::new("reg.exe");
+        cmd.arg("add").arg(key);
+        match name {
+            Some(n) => cmd.arg("/v").arg(n),
+            None => cmd.arg("/ve"),
+        };
+        cmd.args(["/t", "REG_SZ", "/d", value, "/f"]).creation_flags(0x0800_0000);
+        let ok = cmd.status().map_err(|e| e.to_string())?.success();
+        if !ok {
+            return Err(format!("Windows refused to register {key}"));
+        }
+    }
+    Ok(())
+}
+
 /// A link handed over on the command line that needs the Add sheet (video sites).
 #[tauri::command]
 fn take_pending_add(app: State<'_, App>) -> Option<String> {
@@ -197,7 +298,17 @@ fn show_main(app: &AppHandle) {
 
 /// Links passed on the command line (`dasidm.exe <url>…`) are added as downloads.
 fn add_urls(app: &AppHandle, args: &[String]) {
-    let mut urls: Vec<String> = args.iter().filter(|a| a.starts_with("http://") || a.starts_with("https://")).cloned().collect();
+    // A magnet link or a .torrent file opens the Add sheet with its file list.
+    if let Some(t) = args.iter().skip(1).find(|a| das_core::is_torrent_link(a)) {
+        *app.state::<App>().pending_add.lock() = Some(t.clone());
+        show_main(app);
+        let _ = app.emit("open-add", t.clone());
+    }
+    let mut urls: Vec<String> = args
+        .iter()
+        .filter(|a| (a.starts_with("http://") || a.starts_with("https://")) && !das_core::is_torrent_link(a))
+        .cloned()
+        .collect();
     // A video page needs a quality choice: open the Add sheet with it instead of saving the page.
     if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u)) {
         let link = urls.remove(i);
@@ -265,7 +376,19 @@ fn main() {
             update_tools,
             video_info,
             add_video,
-            thumbnail
+            thumbnail,
+            torrent_preview,
+            add_torrent,
+            torrent_trackers,
+            add_trackers,
+            remove_trackers,
+            replace_tracker,
+            reannounce,
+            torrent_files,
+            set_torrent_files,
+            seed,
+            pick_torrent_file,
+            register_torrent_handler
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -322,6 +445,12 @@ fn main() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // A .torrent file dropped on the window opens it in the Add sheet.
+            if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                if let Some(p) = paths.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("torrent"))) {
+                    let _ = window.app_handle().emit("open-add", p.to_string_lossy().into_owned());
+                }
+            }
             if let WindowEvent::Destroyed = event {
                 if window.label() == "main" {
                     window.app_handle().state::<App>().core.set_visible(false);

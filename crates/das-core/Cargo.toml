@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 base64 = "0.23.1"
 das-engine = { version = "0.1.0", path = "../das-engine" }
+das-torrent = { version = "0.1.0", path = "../das-torrent" }
 dirs = "7.0.0"
 fastrand = "2.5.0"
 parking_lot = "0.13.0"
@@ -20,4 +22,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Syste
 zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+axum = "0.8"
+librqbit = { version = "9.1.0", default-features = false, features = ["default-tls"] }
 tempfile = "3.27.0"

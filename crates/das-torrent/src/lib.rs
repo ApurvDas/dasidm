@@ -479,6 +479,13 @@ impl Torrents {
         }
     }
 
+    /// New settings: limits apply at once; port, UPnP and DHT the next time the session starts.
+    pub fn update_settings(&self, s: TorrentSettings) {
+        let (down, up) = (s.down_bps, s.up_bps);
+        *self.settings.lock() = s;
+        self.set_limits(down, up);
+    }
+
     /// Global limits in bytes per second (0 = none); applied live.
     pub fn set_limits(&self, down_bps: u64, up_bps: u64) {
         {

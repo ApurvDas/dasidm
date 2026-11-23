@@ -13,6 +13,26 @@ pub struct Settings {
     pub close_to_tray: bool,
     pub notify_on_complete: bool,
     pub start_with_windows: bool,
+
+    // BitTorrent
+    /// Port for incoming peers. Picked at random once, then kept so seeding keeps working.
+    pub torrent_port: u16,
+    pub torrent_upnp: bool,
+    pub torrent_dht: bool,
+    /// Upload limit for torrents, bytes per second, 0 = unlimited.
+    pub upload_limit: u64,
+    /// Stop seeding once uploaded / size reaches this (0 = no ratio limit).
+    pub seed_ratio: f32,
+    /// Stop seeding after this many minutes (0 = no time limit).
+    pub seed_minutes: u32,
+    /// Trackers added to every new torrent, one per line.
+    pub default_trackers: String,
+}
+
+impl Settings {
+    pub fn default_tracker_list(&self) -> Vec<String> {
+        self.default_trackers.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+    }
 }
 
 impl Default for Settings {
@@ -27,6 +47,13 @@ impl Default for Settings {
             close_to_tray: true,
             notify_on_complete: true,
             start_with_windows: false,
+            torrent_port: 0,
+            torrent_upnp: true,
+            torrent_dht: true,
+            upload_limit: 0,
+            seed_ratio: 1.0,
+            seed_minutes: 0,
+            default_trackers: String::new(),
         }
     }
 }

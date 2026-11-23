@@ -1020,10 +1020,14 @@ dependencies = [
 name = "das-core"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "axum",
  "base64 0.23.1",
  "das-engine",
+ "das-torrent",
  "dirs",
  "fastrand",
+ "librqbit",
  "parking_lot 0.13.0",
  "rusqlite",
  "serde",

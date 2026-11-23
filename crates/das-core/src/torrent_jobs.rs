@@ -4,6 +4,12 @@
 use super::*;
 use das_torrent::{AddOptions, FileEntry, Preview, Source, State as TState, TorrentSettings, TrackerView};
 
+/// How long the torrent session may sit with nothing to do before it is stopped (a minute;
+/// `DASIDM_TORRENT_IDLE_MS` overrides it for tests).
+fn torrents_idle_ms() -> i64 {
+    std::env::var("DASIDM_TORRENT_IDLE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60_000)
+}
+
 /// How many verified-piece buckets the pass and the torrent view draw.
 const PIECE_BUCKETS: usize = 96;
 
@@ -145,6 +151,7 @@ impl Manager {
     }
 
     pub fn torrent_trackers(&self, id: &str) -> Vec<TrackerView> {
+        self.inner.viewing_torrent();
         self.inner.torrent_hash(id).map(|h| self.inner.torrents.trackers(&h)).unwrap_or_default()
     }
 
@@ -171,6 +178,7 @@ impl Manager {
 
     /// The torrent's files with progress, and which are chosen.
     pub fn torrent_files(&self, id: &str) -> (Vec<FileEntry>, Option<Vec<usize>>) {
+        self.inner.viewing_torrent();
         let Some(h) = self.inner.torrent_hash(id) else { return (vec![], None) };
         (self.inner.torrents.files(&h), self.inner.torrents.chosen_files(&h))
     }
@@ -198,6 +206,11 @@ impl Manager {
         };
         self.inner.persist_and_emit(&[item]);
         Ok(())
+    }
+
+    /// Whether the BitTorrent session is running right now.
+    pub fn torrents_running(&self) -> bool {
+        self.inner.torrents.is_started()
     }
 
     /// Upload a finished torrent to others again.
@@ -440,6 +453,41 @@ impl Inner {
             }),
         });
         (changed, completed)
+    }
+
+    /// The torrent view is open: keep the session up (start it if it was stopped, so a paused
+    /// torrent's trackers and files can be seen and edited).
+    pub(super) fn viewing_torrent(self: &Arc<Self>) {
+        self.torrents_viewed_at.store(now_ms(), std::sync::atomic::Ordering::Relaxed);
+        if !self.torrents.is_started() {
+            let tor = self.torrents.clone();
+            tokio::spawn(async move {
+                let _ = tor.start().await;
+            });
+        }
+    }
+
+    /// Free the torrent session (memory, sockets, DHT) once it has had nothing to download or
+    /// seed for a minute, e.g. after a preview that was cancelled or once every torrent is
+    /// paused. It starts again on the next preview, add or resume.
+    pub(super) async fn stop_idle_torrents(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        if !self.torrents.is_started() || Inner::has_active_torrents(&self.state.lock()) {
+            self.torrents_idle_since.store(0, Relaxed);
+            return;
+        }
+        let now = now_ms();
+        if now - self.torrents_viewed_at.load(Relaxed) < torrents_idle_ms() {
+            self.torrents_idle_since.store(0, Relaxed);
+            return;
+        }
+        let since = self.torrents_idle_since.load(Relaxed);
+        if since == 0 {
+            self.torrents_idle_since.store(now, Relaxed);
+        } else if now - since >= torrents_idle_ms() && self.torrents.stop_if_idle().await {
+            self.torrents_idle_since.store(0, Relaxed);
+            tracing::info!("torrent session stopped: nothing to download or seed");
+        }
     }
 
     pub(super) fn has_active_torrents(st: &State) -> bool {

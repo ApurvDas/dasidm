@@ -73,6 +73,8 @@ async fn torrent_item_lifecycle() {
         .unwrap();
 
     // DasIDM.
+    // Stop the idle torrent session after 1.5 s instead of a minute.
+    unsafe { std::env::set_var("DASIDM_TORRENT_IDLE_MS", "1500") };
     let dl = tmp.path().join("Downloads");
     let m = Manager::open(&tmp.path().join("data"), Arc::new(|_| {})).unwrap();
     let port = m.settings().torrent_port;
@@ -113,8 +115,12 @@ async fn torrent_item_lifecycle() {
     let after = m.get(&item.id).unwrap();
     assert_eq!(after.status, Status::Done);
     assert!(!after.torrent.unwrap().seeding);
+    // Nothing to download or seed: the session stops by itself, and Seed starts it again.
+    wait_for("idle session stopped", 15, || !m.torrents_running()).await;
     m.seed(&[item.id.clone()]);
     assert!(m.get(&item.id).unwrap().torrent.unwrap().seeding);
+    wait_for("session back for seeding", 15, || m.torrents_running()).await;
+    assert!(m.torrent_trackers(&item.id).iter().any(|t| t.url.starts_with("udp://tracker.invalid")), "trackers kept across the stop");
 
     // Removing a finished torrent keeps its file unless asked.
     m.remove(&[item.id.clone()], false);

@@ -3,7 +3,7 @@
   import { flip, type FlipParams } from 'svelte/animate';
   import { app, select, seen } from '../lib/state.svelte';
   import { bytes, doneAt, percent, speed, speedParts } from '../lib/format';
-  import SegStrip from '../lib/SegStrip.svelte';
+  import PiecesBar from '../lib/PiecesBar.svelte';
   import { reducedMotion } from '../lib/motion';
   import Icon from '../lib/Icon.svelte';
   import type { ItemView } from '../lib/types';
@@ -187,7 +187,7 @@
         <span class="r">{i.status === 'queued' ? '—' : speed(p?.speed)}</span>
         <span class="st">{#if app.lit[i.id] === 'moved'}<b><Icon name="caret" size={11} />MOVED UP</b> {pctOf(i) ?? '··'}%{:else}{status(i)}{/if}</span>
         <span class="strip">
-          <SegStrip gaps={p?.gaps?.length ? p.gaps : null} heads={p?.heads ?? []} fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)} tone={i.status === 'queued' ? 'steel' : 'ivory'} />
+          <PiecesBar p={i.status === 'downloading' ? p : undefined} fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)} tone={i.status === 'queued' ? 'steel' : 'ivory'} height={5} cells={48} />
         </span>
       </button>
     {:else}

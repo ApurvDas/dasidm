@@ -2,7 +2,7 @@
   import { app, matchesFilter, select, type SortKey } from '../lib/state.svelte';
   import { bytes, percent, speed, when } from '../lib/format';
   import Mark from '../lib/Mark.svelte';
-  import SegStrip from '../lib/SegStrip.svelte';
+  import PiecesBar from '../lib/PiecesBar.svelte';
   import Icon from '../lib/Icon.svelte';
   import { CATEGORIES, category, typeIcon, type ItemView } from '../lib/types';
   import { PHASE, isPostPhase, mediaLine } from '../lib/media';
@@ -71,18 +71,17 @@
       case 'downloading': {
         const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size);
         if (p?.phase && isPostPhase(p.phase)) return `${PHASE[p.phase]}…`;
+        // The percentage sits beside the pieces bar; the text carries the rest.
         if (i.kind === 'torrent') {
-          if (p?.torrent?.checking) return `Checking pieces · ${pc ?? 0}%`;
-          return `${pc ?? '··'}% · ${speed(p?.speed)} · ${p?.torrent?.peers ?? 0} peers`;
+          if (p?.torrent?.checking) return 'Checking pieces';
+          return `${speed(p?.speed)} · ${p?.torrent?.peers ?? 0} peers`;
         }
-        return `${pc ?? '··'}% · ${speed(p?.speed)}`;
+        return pc == null ? `${bytes(p?.downloaded ?? i.downloaded)} · ${speed(p?.speed)}` : speed(p?.speed);
       }
       case 'queued':
         return 'Waiting';
-      case 'paused': {
-        const pc = percent(i.downloaded, i.size);
-        return pc == null ? 'Paused' : `Paused at ${pc}%`;
-      }
+      case 'paused':
+        return 'Paused';
       case 'failed':
         return i.error ?? 'Failed';
       case 'done':
@@ -183,7 +182,17 @@
           <span class="r">{bytes(p?.size ?? i.size)}</span>
           <span class="st">
             {#if i.status === 'downloading' || i.status === 'paused'}
-              <span class="mini"><SegStrip gaps={p?.gaps?.length ? p.gaps : null} heads={p?.heads ?? []} fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)} tone={i.status === 'paused' ? 'steel' : 'ivory'} /></span>
+              {@const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size)}
+              <span class="mini"
+                ><PiecesBar
+                  p={i.status === 'downloading' ? p : undefined}
+                  fraction={(p?.downloaded ?? i.downloaded) / ((p?.size ?? i.size) || 1)}
+                  tone={i.status === 'paused' ? 'steel' : 'ivory'}
+                  height={10}
+                  cells={20}
+                /></span
+              >
+              <span class="pcv" class:paused={i.status === 'paused'}>{pc ?? '··'}%</span>
             {/if}
             <span class="stext">{statusText(i)}</span>
           </span>
@@ -406,9 +415,22 @@
     gap: 10px;
     min-width: 0;
   }
+  /* The pieces bar gives way before the percentage beside it does. */
   .mini {
-    width: 72px;
+    flex: 0 1 150px;
+    min-width: 48px;
+  }
+  .pcv {
     flex: none;
+    min-width: 4ch;
+    text-align: right;
+    font-family: var(--mono);
+    font-stretch: 75%;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .pcv.paused {
+    color: var(--fog);
   }
   .stext {
     overflow: hidden;

@@ -43,6 +43,10 @@ struct Inner {
     torrents: Arc<das_torrent::Torrents>,
     /// Torrents read but not added yet, by info hash.
     previews: Mutex<HashMap<String, Arc<das_torrent::Preview>>>,
+    /// Since when the torrent session has had nothing to download or seed (ms, 0 = not idle).
+    torrents_idle_since: std::sync::atomic::AtomicI64,
+    /// When the torrent view last asked for trackers or files (ms); counts as activity.
+    torrents_viewed_at: std::sync::atomic::AtomicI64,
 }
 
 const HISTORY: usize = 240;
@@ -114,6 +118,8 @@ impl Manager {
                 data_dir: data_dir.to_path_buf(),
                 torrents,
                 previews: Mutex::new(HashMap::new()),
+                torrents_idle_since: std::sync::atomic::AtomicI64::new(0),
+                torrents_viewed_at: std::sync::atomic::AtomicI64::new(0),
             }),
         })
     }
@@ -132,6 +138,9 @@ impl Manager {
             let any_running = self.inner.progress_tick();
             if any_running && n % 8 == 0 {
                 self.inner.checkpoint().await;
+            }
+            if n % 8 == 0 {
+                self.inner.stop_idle_torrents().await;
             }
         }
     }

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::OnceCell;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Id20 = librqbit::dht::Id20;
 
@@ -161,7 +161,12 @@ pub fn parse_tracker(s: &str) -> Option<url::Url> {
 pub struct Torrents {
     dir: PathBuf,
     settings: Mutex<TorrentSettings>,
-    session: OnceCell<Arc<Session>>,
+    /// The running session, if any. It starts on first use and stops again when idle.
+    session: parking_lot::RwLock<Option<Arc<Session>>>,
+    /// Serialises starting and stopping.
+    lifecycle: tokio::sync::Mutex<()>,
+    /// Operations in flight (preview, add, resume…); the session is never stopped under one.
+    busy: AtomicUsize,
     /// Tracker lists the user edited, by info hash (librqbit keeps only the original list).
     saved_trackers: Mutex<HashMap<String, Vec<String>>>,
 }
@@ -170,18 +175,54 @@ impl Torrents {
     /// `dir` holds the session state, fast-resume data and the DHT table.
     pub fn new(dir: &Path, settings: TorrentSettings) -> Self {
         let saved = std::fs::read(dir.join("trackers.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
-        Self { dir: dir.to_path_buf(), settings: Mutex::new(settings), session: OnceCell::new(), saved_trackers: Mutex::new(saved) }
+        Self {
+            dir: dir.to_path_buf(),
+            settings: Mutex::new(settings),
+            session: parking_lot::RwLock::new(None),
+            lifecycle: tokio::sync::Mutex::new(()),
+            busy: AtomicUsize::new(0),
+            saved_trackers: Mutex::new(saved),
+        }
     }
 
     /// Whether the session is running (it starts on first use).
     pub fn is_started(&self) -> bool {
-        self.session.initialized()
+        self.session.read().is_some()
+    }
+
+    fn current(&self) -> Option<Arc<Session>> {
+        self.session.read().clone()
+    }
+
+    /// Mark an operation in flight until the guard is dropped.
+    fn busy(&self) -> Busy<'_> {
+        self.busy.fetch_add(1, Ordering::SeqCst);
+        Busy(&self.busy)
+    }
+
+    /// Stop the session to free its memory, sockets and DHT (torrents keep their state on disk
+    /// and come back on the next start). Does nothing while an operation is in flight; returns
+    /// whether it stopped.
+    pub async fn stop_if_idle(&self) -> bool {
+        let _g = self.lifecycle.lock().await;
+        if self.busy.load(Ordering::SeqCst) > 0 {
+            return false;
+        }
+        let Some(s) = self.session.write().take() else { return false };
+        s.stop().await;
+        true
     }
 
     /// Start the session (and bring back the torrents it remembers).
     pub async fn start(&self) -> Result<Arc<Session>> {
-        self.session
-            .get_or_try_init(|| async {
+        if let Some(s) = self.current() {
+            return Ok(s);
+        }
+        let _g = self.lifecycle.lock().await;
+        if let Some(s) = self.current() {
+            return Ok(s);
+        }
+        let session = async {
                 let s = self.settings.lock().clone();
                 std::fs::create_dir_all(&self.dir)?;
                 let listen = s.bind.unwrap_or_else(|| (Ipv6Addr::UNSPECIFIED, s.port).into());
@@ -210,9 +251,10 @@ impl Torrents {
                 let session = Session::new_with_opts(self.dir.join("unsorted"), opts).await.context("could not start torrents")?;
                 self.apply_saved_trackers(&session);
                 Ok::<_, anyhow::Error>(session)
-            })
-            .await
-            .cloned()
+        }
+        .await?;
+        *self.session.write() = Some(session.clone());
+        Ok(session)
     }
 
     fn apply_saved_trackers(&self, session: &Arc<Session>) {
@@ -231,17 +273,18 @@ impl Torrents {
 
     fn handle(&self, hash: &str) -> Option<Arc<ManagedTorrent>> {
         let id = Id20::from_str(hash).ok()?;
-        self.session.get()?.get(TorrentIdOrHash::Hash(id))
+        self.current()?.get(TorrentIdOrHash::Hash(id))
     }
 
     /// Info hashes of every torrent the session knows.
     pub fn hashes(&self) -> Vec<String> {
-        let Some(s) = self.session.get() else { return vec![] };
+        let Some(s) = self.current() else { return vec![] };
         s.with_torrents(|all| all.map(|(_, t)| t.info_hash().as_string()).collect())
     }
 
     /// Read a torrent's name and files without downloading it (a magnet asks peers first).
     pub async fn preview(&self, src: &Source) -> Result<Preview> {
+        let _busy = self.busy();
         let session = self.start().await?;
         let opts = AddTorrentOptions { list_only: true, ..Default::default() };
         let AddTorrentResponse::ListOnly(r) = session.add_torrent(src.add(), Some(opts)).await? else {
@@ -288,6 +331,7 @@ impl Torrents {
 
     /// Add a torrent; returns its info hash. Adding one that is already there returns its hash.
     pub async fn add(&self, src: &Source, o: AddOptions) -> Result<String> {
+        let _busy = self.busy();
         let session = self.start().await?;
         let mut trackers: Vec<String> = o.extra_trackers.iter().filter(|t| parse_tracker(t).is_some()).cloned().collect();
         trackers.dedup();
@@ -303,18 +347,26 @@ impl Torrents {
             AddTorrentResponse::Added(_, h) | AddTorrentResponse::AlreadyManaged(_, h) => h,
             AddTorrentResponse::ListOnly(_) => bail!("unexpected list-only answer"),
         };
+        // librqbit restores only the torrent's own trackers after a restart; keep the full list
+        // (with the extra and default ones) so they come back too.
+        if !self.saved_trackers.lock().contains_key(&handle.info_hash().as_string()) {
+            self.remember_trackers(&handle);
+        }
         Ok(handle.info_hash().as_string())
     }
 
     pub async fn pause(&self, hash: &str) -> Result<()> {
+        let _busy = self.busy();
+        let Some(session) = self.current() else { return Ok(()) }; // not running: nothing to pause
         let h = self.handle(hash).context("torrent not found")?;
         if matches!(h.stats().state, TorrentStatsState::Paused) {
             return Ok(());
         }
-        self.session.get().unwrap().pause(&h).await
+        session.pause(&h).await
     }
 
     pub async fn resume(&self, hash: &str) -> Result<()> {
+        let _busy = self.busy();
         let session = self.start().await?;
         let h = self.handle(hash).context("torrent not found")?;
         if !matches!(h.stats().state, TorrentStatsState::Paused) {
@@ -328,7 +380,8 @@ impl Torrents {
         if self.saved_trackers.lock().remove(hash).is_some() {
             self.save_trackers();
         }
-        let Some(session) = self.session.get() else { return Ok(()) };
+        let _busy = self.busy();
+        let session = self.start().await?; // the session owns the files and their state
         let id = Id20::from_str(hash).map_err(|_| anyhow::anyhow!("bad info hash"))?;
         if session.get(TorrentIdOrHash::Hash(id)).is_none() {
             return Ok(());
@@ -391,6 +444,7 @@ impl Torrents {
 
     /// Change which files are downloaded, while the torrent runs.
     pub async fn set_files(&self, hash: &str, only: Vec<usize>) -> Result<()> {
+        let _busy = self.busy();
         let session = self.start().await?;
         let h = self.handle(hash).context("torrent not found")?;
         if only.is_empty() {
@@ -493,7 +547,7 @@ impl Torrents {
             s.down_bps = down_bps;
             s.up_bps = up_bps;
         }
-        if let Some(session) = self.session.get() {
+        if let Some(session) = self.current() {
             session.ratelimits.set_download_bps(nz(down_bps));
             session.ratelimits.set_upload_bps(nz(up_bps));
         }
@@ -501,8 +555,17 @@ impl Torrents {
 
     /// Stop everything (the session saves its state as it goes).
     pub async fn shutdown(&self) {
-        if let Some(s) = self.session.get() {
+        let _g = self.lifecycle.lock().await;
+        if let Some(s) = self.session.write().take() {
             s.stop().await;
         }
+    }
+}
+
+struct Busy<'a>(&'a AtomicUsize);
+
+impl Drop for Busy<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
     }
 }

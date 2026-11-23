@@ -200,6 +200,27 @@ async fn swarm_with_live_trackers() {
     let urls: Vec<String> = t.trackers(&hash).into_iter().map(|x| x.url).collect();
     assert!(urls.contains(&b2) && urls.contains(&dead) && !urls.contains(&tracker_a), "{urls:?}");
 
+    // Stopping an idle session frees it; the next use starts it again (same port) with the
+    // torrent and its edited trackers intact. A busy session is never stopped.
+    assert!(t.stop_if_idle().await);
+    assert!(!t.is_started());
+    assert!(t.hashes().is_empty() && t.stats(&hash).is_none());
+    t.start().await.unwrap();
+    assert_eq!(t.hashes(), [hash.clone()]);
+    wait_for("restored after idle stop", 30, || t.stats(&hash).is_some_and(|s| s.finished)).await;
+    assert!(t.trackers(&hash).iter().any(|x| x.url == b2));
+    let src = Source::File(torrent.clone());
+    let (busy, stop) = tokio::join!(t.preview(&src), async {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        t.stop_if_idle().await
+    });
+    assert!(busy.is_ok(), "a preview must not be cut off by an idle stop");
+    if stop {
+        // It stopped once the preview was done; starting again re-checks pieces on disk.
+        t.start().await.unwrap();
+    }
+    wait_for("finished after restart", 30, || t.stats(&hash).is_some_and(|s| s.finished)).await;
+
     // Files can be listed, and removal forgets the torrent but keeps its files unless asked.
     assert_eq!(t.files(&hash).iter().map(|f| f.done).sum::<u64>(), 3 << 20);
     t.remove(&hash, false).await.unwrap();

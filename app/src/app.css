@@ -1,0 +1,230 @@
+@font-face {
+  font-family: 'Martian Mono';
+  src: url('./assets/fonts/MartianMono.woff2') format('woff2');
+  font-weight: 100 800;
+  font-stretch: 75% 112.5%;
+  font-display: block;
+}
+
+/* Condensed gothic for the board's big numerals and headings (OFL, self-hosted). */
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('./assets/fonts/BarlowCondensed-600.woff2') format('woff2');
+  font-weight: 600;
+  font-display: block;
+}
+@font-face {
+  font-family: 'Barlow Condensed';
+  src: url('./assets/fonts/BarlowCondensed-700.woff2') format('woff2');
+  font-weight: 700;
+  font-display: block;
+}
+
+:root {
+  /* Gate board on smoked glass. Ground is Windows Mica; panels are tinted glass over it. */
+  --ink: #0b0d10;
+  --slate: #1c2127;
+  --steel: #6b7178;
+  --fog: #9aa1a9; /* secondary text, 7:1 on glass panels */
+  --ivory: #f2f2ee;
+  --alert: #ffd400;
+  --alert-ink: #1a1600;
+  --ok: #4cc38a;
+  --bad: #ff6b6b;
+  --line: rgb(255 255 255 / 0.08);
+  --line-strong: rgb(255 255 255 / 0.14);
+  --glass-board: rgb(11 13 16 / 0.6);
+  --glass-hall: rgb(16 19 23 / 0.64);
+  --glass-pass: rgb(13 16 19 / 0.56);
+  /* Light catching the top edge of a glass panel. */
+  --edge: inset 0 1px 0 rgb(255 255 255 / 0.07);
+  --hover: rgb(255 255 255 / 0.045);
+  /* Selection is ivory; yellow is reserved for change and the primary action. */
+  --selected: rgb(242 242 238 / 0.08);
+  --selected-line: inset 0 0 0 1px rgb(242 242 238 / 0.28);
+
+  --mono: 'Martian Mono', ui-monospace, monospace;
+  --gothic: 'Barlow Condensed', 'Segoe UI Variable Display', sans-serif;
+  --ui: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --row: 34px;
+  --radius: 8px;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  color-scheme: dark;
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ivory);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Mica supplies the ground inside the app; this only shows outside Tauri (browser preview). */
+body {
+  background: transparent;
+  user-select: none;
+  cursor: default;
+}
+
+body.preview {
+  background:
+    radial-gradient(900px 600px at 12% 8%, #29466a, transparent 70%),
+    radial-gradient(700px 500px at 88% 92%, #4d3a2c, transparent 70%),
+    #0c1016;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+input,
+select {
+  user-select: text;
+}
+
+::selection {
+  background: rgb(255 212 0 / 0.35);
+  color: var(--ivory);
+}
+
+:focus-visible {
+  outline: 2px solid var(--alert);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 0.12);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 0.22);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+}
+
+/* Board voice: condensed mono, uppercase, tracked. */
+.cap {
+  font-family: var(--mono);
+  font-stretch: 75%;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fog);
+}
+
+.btn {
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: rgb(255 255 255 / 0.04);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 120ms var(--ease), border-color 120ms var(--ease);
+}
+.btn:hover {
+  background: rgb(255 255 255 / 0.09);
+}
+.btn:active {
+  background: rgb(255 255 255 / 0.13);
+}
+.btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.btn.primary {
+  background: var(--alert);
+  border-color: var(--alert);
+  color: var(--alert-ink);
+}
+.btn.primary:hover {
+  background: #ffe14d;
+}
+.btn.danger {
+  color: var(--bad);
+  border-color: rgb(255 107 107 / 0.4);
+}
+.btn.ghost {
+  border-color: transparent;
+  background: transparent;
+}
+.btn.ghost:hover {
+  background: var(--hover);
+}
+
+.field {
+  height: 32px;
+  width: 100%;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line-strong);
+  background: rgb(0 0 0 / 0.35);
+  outline: none;
+}
+.field:focus {
+  border-color: var(--alert);
+}
+/* Selects in the board's own chrome, not the WebView default. */
+select.field {
+  appearance: none;
+  padding-right: 30px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='none' stroke='%239aa1a9' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4.5 6.5L8 10l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+select.field:hover {
+  border-color: rgb(255 255 255 / 0.24);
+}
+select.field option {
+  background: #14171c;
+  color: var(--ivory);
+}
+.field::placeholder {
+  color: var(--fog);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

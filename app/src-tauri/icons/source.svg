@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="#0B0D10"/>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="none" stroke="#2A3038" stroke-width="8"/>
+  <!-- board rows -->
+  <rect x="96" y="112" width="320" height="36" rx="8" fill="#1C2127"/>
+  <rect x="96" y="172" width="320" height="36" rx="8" fill="#1C2127"/>
+  <rect x="96" y="112" width="132" height="36" rx="8" fill="#6B7178"/>
+  <rect x="96" y="172" width="212" height="36" rx="8" fill="#6B7178"/>
+  <!-- arrival: yellow down arrow into a tray line -->
+  <path d="M256 232 v120 M196 300 l60 60 l60 -60" fill="none" stroke="#FFD400" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="136" y="392" width="240" height="32" rx="16" fill="#FFD400"/>
+</svg>

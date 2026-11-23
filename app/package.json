@@ -1,0 +1,23 @@
+{
+  "name": "dasidm-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tauri-apps/cli": "^2.12.6",
+    "svelte": "^5.59.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8"
+  },
+  "dependencies": {
+    "@fontsource-variable/martian-mono": "^5.3.0",
+    "@tauri-apps/api": "^2.12.5",
+    "animejs": "^4.5.0"
+  }
+}

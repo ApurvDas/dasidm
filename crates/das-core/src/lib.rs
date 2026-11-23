@@ -1,0 +1,12 @@
+//! DasIDM application core: persistence, queue, categories, settings. UI-agnostic.
+
+pub mod categories;
+mod db;
+mod manager;
+pub mod model;
+pub mod settings;
+
+pub use das_engine::ProbeInfo;
+pub use manager::{Emit, Manager};
+pub use model::{AddRequest, CoreEvent, ItemView, Progress, Status, Totals};
+pub use settings::Settings;

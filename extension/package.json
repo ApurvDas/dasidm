@@ -1,6 +1,7 @@
 {
   "name": "dasidm-extension",
   "private": true,
+  "license": "Apache-2.0",
   "description": "DasIDM's browser extensions. Firefox: lint, test and sign (unlisted) with Mozilla's web-ext.",
   "scripts": {
     "test": "node --test firefox",

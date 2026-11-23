@@ -434,6 +434,7 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'repair_browser':
       return { registered: true, manifest: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\dev.dasidm.host.json', extensionDir: 'C:\\Users\\you\\AppData\\Local\\DasIDM\\browser\\firefox', error: null, lastSeen: Date.now() - 90_000 } as T;
     case 'open_extension_folder':
+    case 'open_addon_page':
       return undefined as T;
     case 'seed':
       args.ids.forEach((id: string) => {

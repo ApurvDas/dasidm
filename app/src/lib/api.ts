@@ -66,6 +66,7 @@ export const api = {
   browserStatus: () => invokeImpl<BrowserStatus>('browser_status'),
   repairBrowser: () => invokeImpl<BrowserStatus>('repair_browser'),
   openExtensionFolder: () => invokeImpl<void>('open_extension_folder'),
+  openAddonPage: () => invokeImpl<void>('open_addon_page'),
   clipboardLink: () => invokeImpl<string | null>('clipboard_link'),
   pickFolder: (start?: string | null) => invokeImpl<string | null>('pick_folder', { start: start || null }),
   listen: (cb: (e: CoreEvent) => void) => listenImpl(cb),

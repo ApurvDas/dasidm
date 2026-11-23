@@ -140,11 +140,12 @@
       {:else}Ready; the extension hasn't connected yet{/if}
     </span>
     <span class="hint">
-      With the DasIDM extension, files you download in Firefox open here instead. Add it in Firefox: <b>about:debugging</b> → This Firefox → Load
-      Temporary Add-on… → <b>manifest.json</b> in the extension folder (until Firefox restarts), or install the signed copy.
+      With the <b>DasIDM – Download Manager</b> add-on, files you download in Firefox open here instead. Get it from Firefox Add-ons; the
+      extension folder is for trying a development copy (<b>about:debugging</b> → Load Temporary Add-on…).
     </span>
     <div class="btns">
-      <button class="btn" onclick={() => run(api.openExtensionFolder())}><Icon name="folder" />Open extension folder</button>
+      <button class="btn primary" onclick={() => run(api.openAddonPage())}><Icon name="open" />Get the Firefox add-on</button>
+      <button class="btn" onclick={() => run(api.openExtensionFolder())}><Icon name="folder" />Extension folder</button>
       <button class="btn ghost" onclick={repair}><Icon name="restart" />Repair</button>
     </div>
   </div>

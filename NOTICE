@@ -1,0 +1,22 @@
+DasIDM
+Copyright 2026 Apurv Das
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+DasIDM was written from scratch. Its feature set was inspired by Prism Download Manager
+(https://github.com/FortoGraphy/prism-download-manager); no code was taken from it.
+DasIDM is not affiliated with, endorsed by or connected to Internet Download Manager or
+Tonec Inc.
+
+This product includes software developed by others:
+
+- librqbit and librqbit-tracker-comms 9.1.0, Copyright 2021 Igor Katson, licensed under the
+  Apache License, Version 2.0. Copied into third_party/ and changed by DasIDM; see
+  third_party/NOTICE.md for what was changed.
+- The Rust crates and npm packages listed in Cargo.lock and app/package-lock.json, each
+  under its own licence.
+
+At run time, and only after the user agrees, DasIDM downloads yt-dlp (The Unlicense),
+FFmpeg (GPL build, from yt-dlp's FFmpeg-Builds) and Deno (MIT) from their publishers'
+GitHub releases. They are separate programs, not part of DasIDM, and are not distributed
+with it.

@@ -287,6 +287,15 @@ fn open_extension_folder() -> Res<()> {
     std::process::Command::new("explorer").arg(&dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// The add-on's page on Firefox Add-ons, opened in the default browser. A fixed address,
+/// never one from the page: until the listing is live it is the store's search for DasIDM.
+const ADDON_PAGE: &str = "https://addons.mozilla.org/firefox/search/?q=DasIDM";
+
+#[tauri::command]
+fn open_addon_page() -> Res<()> {
+    std::process::Command::new("explorer").arg(ADDON_PAGE).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -464,7 +473,8 @@ fn main() {
             register_torrent_handler,
             browser_status,
             repair_browser,
-            open_extension_folder
+            open_extension_folder,
+            open_addon_page
         ])
         .setup(move |app| {
             let handle = app.handle().clone();

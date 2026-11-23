@@ -36,7 +36,7 @@ default = [
     "http-api-client",
 ]
 default-tls = [
-    "reqwest/default-tls",
+    "reqwest/native-tls",
     "sha1w/sha1-crypto-hash",
     "librqbit-core/sha1-crypto-hash",
 ]

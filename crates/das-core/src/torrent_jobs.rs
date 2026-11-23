@@ -10,6 +10,26 @@ fn torrents_idle_ms() -> i64 {
     std::env::var("DASIDM_TORRENT_IDLE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(60_000)
 }
 
+/// Where "Find more peers" gets public trackers: ngosang/trackerslist's "best" list, a widely
+/// used list of public trackers that is checked and updated every day. Fetched only when the
+/// user asks for it.
+pub const PUBLIC_TRACKERS_URL: &str = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
+
+/// The trackers in a list: one address per line; blank lines, comments and anything that is
+/// not an http(s) or udp tracker are dropped, duplicates too, and at most 100 are kept.
+pub fn parse_tracker_list(text: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+        if das_torrent::parse_tracker(line).is_some() && !out.iter().any(|t| t == line) {
+            out.push(line.to_string());
+        }
+        if out.len() == 100 {
+            break;
+        }
+    }
+    out
+}
+
 /// How many verified-piece buckets the pass and the torrent view draw.
 const PIECE_BUCKETS: usize = 96;
 
@@ -174,6 +194,31 @@ impl Manager {
     pub fn reannounce(&self, id: &str) -> Result<(), String> {
         let h = self.hash_of(id)?;
         self.inner.torrents.reannounce(&h).map_err(|e| e.to_string())
+    }
+
+    /// Today's public tracker list (see [`PUBLIC_TRACKERS_URL`]).
+    pub async fn public_trackers(&self) -> Result<Vec<String>, String> {
+        let (bytes, _) = self
+            .inner
+            .engine
+            .fetch_small(PUBLIC_TRACKERS_URL, 256 * 1024)
+            .await
+            .map_err(|e| format!("Couldn't get the public tracker list: {e}"))?;
+        let list = parse_tracker_list(&String::from_utf8_lossy(&bytes));
+        if list.is_empty() {
+            return Err("The public tracker list came back empty; try again later.".into());
+        }
+        Ok(list)
+    }
+
+    /// Add the public trackers to a torrent and ask every tracker for peers at once.
+    /// Returns (newly added, in the list).
+    pub async fn find_more_peers(&self, id: &str) -> Result<(usize, usize), String> {
+        self.hash_of(id)?;
+        let list = self.public_trackers().await?;
+        let added = self.add_trackers(id, list.clone())?;
+        let _ = self.reannounce(id);
+        Ok((added, list.len()))
     }
 
     /// The torrent's files with progress, and which are chosen.
@@ -514,6 +559,18 @@ fn friendly_torrent_error(e: &anyhow::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reads_a_tracker_list() {
+        let text = "udp://tracker.example.org:1337/announce\n\n# a comment\nhttps://t.example.net/announce\nudp://tracker.example.org:1337/announce\nnot a tracker\nftp://x.example/announce\n  http://spaced.example/announce  \n";
+        assert_eq!(
+            super::parse_tracker_list(text),
+            ["udp://tracker.example.org:1337/announce", "https://t.example.net/announce", "http://spaced.example/announce"]
+        );
+        let many: String = (0..150).map(|i| format!("udp://t{i}.example:80/announce\n")).collect();
+        assert_eq!(super::parse_tracker_list(&many).len(), 100);
+        assert!(super::parse_tracker_list("").is_empty());
+    }
+
     #[test]
     fn spots_torrent_links() {
         assert!(super::is_torrent_link("magnet:?xt=urn:btih:abc"));

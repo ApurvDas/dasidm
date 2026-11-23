@@ -50,6 +50,9 @@ export const api = {
   removeTrackers: (id: string, urls: string[]) => invokeImpl<number>('remove_trackers', { id, urls }),
   replaceTracker: (id: string, old: string, next: string) => invokeImpl<void>('replace_tracker', { id, old, new: next }),
   reannounce: (id: string) => invokeImpl<void>('reannounce', { id }),
+  /** Adds today's public tracker list (fetched from GitHub on request) and asks them all. */
+  findMorePeers: (id: string) => invokeImpl<{ added: number; total: number }>('find_more_peers', { id }),
+  publicTrackers: () => invokeImpl<string[]>('public_trackers'),
   torrentFiles: (id: string) => invokeImpl<{ files: TorrentFile[]; chosen: number[] | null }>('torrent_files', { id }),
   setTorrentFiles: (id: string, only: number[]) => invokeImpl<void>('set_torrent_files', { id, only }),
   seed: (ids: string[]) => invokeImpl<void>('seed', { ids }),

@@ -416,6 +416,16 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
     case 'replace_tracker':
       mockTrackers = mockTrackers.map((t) => (t.url === args.old ? { ...t, url: args.new, state: 'notContacted', seeders: null, leechers: null, peers: 0, message: null } : t));
       return undefined as T;
+    case 'find_more_peers':
+    case 'public_trackers': {
+      await new Promise((r) => setTimeout(r, 700));
+      const list = ['udp://tracker.example-public.org:1337/announce', 'udp://open.example-tracker.net:6969/announce', 'https://tracker.example-best.io:443/announce'];
+      if (cmd === 'public_trackers') return list as T;
+      const fresh = list.filter((u) => !mockTrackers.some((t) => t.url === u));
+      mockTrackers = [...mockTrackers, ...fresh.map((url) => ({ url, tier: 9, state: 'updating' as const, seeders: null, leechers: null, peers: 0, lastAnnounce: null, nextAnnounce: null, message: null }))];
+      setTimeout(() => (mockTrackers = mockTrackers.map((t) => (fresh.includes(t.url) ? { ...t, state: 'working', seeders: 240, leechers: 31, peers: 50, lastAnnounce: Date.now(), nextAnnounce: Date.now() + 1_800_000 } : t))), 1500);
+      return { added: fresh.length, total: list.length } as T;
+    }
     case 'reannounce':
       mockTrackers = mockTrackers.map((t) => (t.state === 'disabled' ? t : { ...t, state: 'updating' }));
       setTimeout(() => (mockTrackers = mockTrackers.map((t) => (t.state === 'updating' ? { ...t, state: t.url.includes('three') ? 'notWorking' : 'working', lastAnnounce: Date.now() } : t))), 1200);

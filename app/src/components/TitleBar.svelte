@@ -3,6 +3,7 @@
   import { app, matchesFilter, run, type Filter } from '../lib/state.svelte';
   import Icon from '../lib/Icon.svelte';
   import Mark from '../lib/Mark.svelte';
+  import { version } from '../lib/version';
   import type { Status } from '../lib/types';
 
   // Each filter tab carries the same state mark as its rows, so a bare count is never unlabelled.
@@ -39,9 +40,10 @@
 </script>
 
 <header class="title" data-tauri-drag-region>
-  <span class="brand" data-tauri-drag-region>
+  <span class="brand" data-tauri-drag-region title="DasIDM {version}">
     <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="1" width="14" height="14" rx="3" fill="#0b0d10" stroke="#2a3038" /><path d="M8 4v5M5.5 7.5L8 10l2.5-2.5" stroke="#ffd400" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /><rect x="4.5" y="11.5" width="7" height="1.4" rx=".7" fill="#ffd400" /></svg>
     DASIDM
+    <span class="ver" data-tauri-drag-region>v{version}</span>
   </span>
 
   <nav class="tabs" aria-label="Filter downloads">
@@ -102,6 +104,13 @@
     font-size: 15px;
     letter-spacing: 0.08em;
     padding-right: 6px;
+  }
+  .ver {
+    margin-left: -3px;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--fog);
   }
   .tabs {
     display: flex;

@@ -130,3 +130,85 @@ async fn torrent_item_lifecycle() {
     m.shutdown().await;
     seeder.stop().await;
 }
+
+/// A torrent still downloading when DasIDM quits carries on after the next start, and quitting
+/// with a live torrent doesn't hang.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn downloading_torrent_resumes_after_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let seed = tmp.path().join("seed");
+    std::fs::create_dir_all(&seed).unwrap();
+    let data: Vec<u8> = (0..(1u32 << 20)).map(|i| (i.wrapping_mul(2246822519) >> 23) as u8).collect();
+    std::fs::write(seed.join("clip.mkv"), &data).unwrap();
+
+    // The tracker points at a seeder that only comes up after the restart.
+    let seed_port = free_port();
+    let peers: Vec<u8> = [127, 0, 0, 1].into_iter().chain(seed_port.to_be_bytes()).collect();
+    let body: Arc<Vec<u8>> = Arc::new([b"d8:completei1e10:incompletei0e8:intervali1e5:peers6:".as_slice(), &peers, b"e"].concat());
+    let app = axum::Router::new().route("/announce", get(move || { let b = body.clone(); async move { b.to_vec() } }));
+    let tl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker = format!("http://{}/announce", tl.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(tl, app).await.unwrap() });
+    let made = librqbit::create_torrent(
+        &seed.join("clip.mkv"),
+        CreateTorrentOptions { name: None, trackers: vec![tracker], piece_length: Some(32 * 1024) },
+        &BlockingSpawner::new(2),
+    )
+    .await
+    .unwrap();
+    let torrent_file = tmp.path().join("clip.torrent");
+    std::fs::write(&torrent_file, made.as_bytes().unwrap()).unwrap();
+
+    let data_dir = tmp.path().join("data");
+    let dl = tmp.path().join("Downloads");
+    let m = Manager::open(&data_dir, Arc::new(|_| {})).unwrap();
+    m.set_settings(Settings { download_dir: dl.to_string_lossy().into_owned(), torrent_dht: false, torrent_upnp: false, ..m.settings() }).unwrap();
+    tokio::spawn(m.clone().run());
+    let p = m.torrent_preview(None, Some(torrent_file.to_string_lossy().into_owned())).await.unwrap();
+    let id = m
+        .add_torrent(AddTorrentRequest { info_hash: p.info_hash.clone(), only_files: None, extra_trackers: vec![], save_dir: None, start: true })
+        .await
+        .unwrap()
+        .id;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(m.get(&id).unwrap().status, Status::Downloading, "no seeder yet");
+    tokio::time::timeout(Duration::from_secs(20), m.shutdown()).await.expect("quitting with a live torrent hung");
+    drop(m);
+
+    // The seeder comes up; DasIDM starts again on the same data.
+    let seeder = Session::new_with_opts(
+        seed.clone(),
+        SessionOptions {
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            persistence: None,
+            ipv4_only: true,
+            listen: Some(ListenerOptions { listen_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, seed_port)), ipv4_only: true, ..Default::default() }),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    seeder
+        .add_torrent(
+            AddTorrent::from_bytes(made.as_bytes().unwrap()),
+            Some(AddTorrentOptions { output_folder: Some(seed.to_string_lossy().into_owned()), overwrite: true, ..Default::default() }),
+        )
+        .await
+        .unwrap();
+    let m2 = Manager::open(&data_dir, Arc::new(|_| {})).unwrap();
+    tokio::spawn(m2.clone().run());
+    let after = m2.get(&id).unwrap();
+    assert_ne!(after.status, Status::Queued, "a torrent must not wait in the HTTP queue");
+    wait_for("the torrent to finish after the restart", 60, || {
+        let i = m2.get(&id).unwrap();
+        assert_ne!(i.status, Status::Failed, "failed after restart: {:?}", i.error);
+        i.status == Status::Done
+    })
+    .await;
+    let path = m2.get(&id).unwrap().file_path.unwrap();
+    assert!(std::fs::read(&path).unwrap() == data, "bytes differ");
+    let _ = tokio::time::timeout(Duration::from_secs(20), m2.shutdown()).await;
+    seeder.stop().await;
+}

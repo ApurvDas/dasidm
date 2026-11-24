@@ -556,7 +556,10 @@ impl Torrents {
     /// Stop everything (the session saves its state as it goes).
     pub async fn shutdown(&self) {
         let _g = self.lifecycle.lock().await;
-        if let Some(s) = self.session.write().take() {
+        // Take the session out first: in `if let`, the write guard would live through the
+        // await, and every progress tick reading the session would block its thread.
+        let session = self.session.write().take();
+        if let Some(s) = session {
             s.stop().await;
         }
     }

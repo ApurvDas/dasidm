@@ -93,8 +93,9 @@ impl Manager {
         }
         let mut state = State::default();
         for mut item in db.load_items().map_err(|e| e.to_string())? {
-            // A crash or exit mid-download: pick it up again.
-            if item.status == Status::Downloading {
+            // A crash or exit mid-download: pick it up again. Torrents stay Downloading: the
+            // torrent session resumes them (`start_torrents_if_needed`); the HTTP queue can't.
+            if item.status == Status::Downloading && item.kind != Kind::Torrent {
                 item.status = Status::Queued;
             }
             // A finished video left in its work folder (older versions could lose the real file
@@ -567,6 +568,12 @@ impl Inner {
                     break;
                 }
                 let item = st.items.get_mut(&id).unwrap();
+                if item.kind == Kind::Torrent {
+                    // Never the HTTP engine's job (older versions could leave one Queued).
+                    item.status = Status::Downloading;
+                    started.push(item.clone());
+                    continue;
+                }
                 if item.kind == Kind::Video {
                     let Some(spec) = item.video.clone() else { continue };
                     if !self.tools.ready() {

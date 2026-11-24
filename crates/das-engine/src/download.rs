@@ -13,7 +13,8 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, AtomicUsize, Ordering::*};
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
@@ -64,6 +65,15 @@ struct Segment {
     start: u64,
     st: Mutex<SegSt>,
     active: AtomicBool,
+    /// Bytes received on this range so far (counted as they arrive, before the buffered write).
+    recv: AtomicU64,
+    /// When the current connection started, and when it last received anything
+    /// (milliseconds since the download's `epoch`).
+    since: AtomicU64,
+    last_rx: AtomicU64,
+    /// Cancels only the current connection, so a fresh one can take the range over.
+    kick: Mutex<Option<CancellationToken>>,
+    kicked: AtomicBool,
 }
 
 struct SegSt {
@@ -75,7 +85,16 @@ struct SegSt {
 
 impl Segment {
     fn new(start: u64, pos: u64, end: u64, active: bool) -> Arc<Self> {
-        Arc::new(Self { start, st: Mutex::new(SegSt { pos, end }), active: AtomicBool::new(active) })
+        Arc::new(Self {
+            start,
+            st: Mutex::new(SegSt { pos, end }),
+            active: AtomicBool::new(active),
+            recv: AtomicU64::new(0),
+            since: AtomicU64::new(0),
+            last_rx: AtomicU64::new(0),
+            kick: Mutex::new(None),
+            kicked: AtomicBool::new(false),
+        })
     }
     fn remaining(&self) -> u64 {
         let s = self.st.lock();
@@ -103,6 +122,13 @@ struct Shared {
     stop: AtomicU8,
     resumable: AtomicBool,
     target: AtomicUsize,
+    /// The line count asked for; `target` falls below it when the server refuses lines and
+    /// climbs back one at a time once it stops.
+    wanted: AtomicUsize,
+    last_refusal: AtomicU64,
+    /// No new connection before this time (a server's Retry-After), ms since `epoch`.
+    retry_until: AtomicU64,
+    epoch: Instant,
     active: AtomicUsize,
     downloaded: AtomicU64,
     meta: Mutex<Meta>,
@@ -131,7 +157,9 @@ impl DownloadHandle {
     }
 
     pub fn set_connections(&self, n: usize) {
-        self.shared.target.store(n.clamp(1, MAX_CONNECTIONS), SeqCst);
+        let n = n.clamp(1, MAX_CONNECTIONS);
+        self.shared.wanted.store(n, SeqCst);
+        self.shared.target.store(n, SeqCst);
     }
 
     pub fn downloaded(&self) -> u64 {
@@ -242,6 +270,24 @@ impl Shared {
         if m.final_url.is_empty() { self.req.url.clone() } else { m.final_url.clone() }
     }
 
+    fn now_ms(&self) -> u64 {
+        self.epoch.elapsed().as_millis() as u64
+    }
+
+    /// The server refused a line: run with what works now, try one more later.
+    fn note_refusal(&self, lines_now: usize) {
+        self.target.store(lines_now.max(1), SeqCst);
+        self.last_refusal.store(self.now_ms(), SeqCst);
+    }
+
+    /// Remember a 429/503's Retry-After (seconds, at most a minute).
+    fn note_retry_after(&self, h: &HeaderMap) {
+        if let Some(secs) = h.get(header::RETRY_AFTER).and_then(|v| v.to_str().ok()).and_then(|v| v.trim().parse::<u64>().ok()) {
+            let until = self.now_ms() + secs.min(60) * 1000;
+            self.retry_until.fetch_max(until, SeqCst);
+        }
+    }
+
     fn total_remaining(&self) -> u64 {
         self.segments.lock().iter().map(|s| s.remaining()).fold(0u64, |a, b| a.saturating_add(b))
     }
@@ -262,6 +308,10 @@ pub(crate) fn spawn(
         stop: AtomicU8::new(STOP_NONE),
         resumable: AtomicBool::new(false),
         target: AtomicUsize::new(target),
+        wanted: AtomicUsize::new(target),
+        last_refusal: AtomicU64::new(0),
+        retry_until: AtomicU64::new(0),
+        epoch: Instant::now(),
         active: AtomicUsize::new(0),
         downloaded: AtomicU64::new(0),
         meta: Mutex::new(Meta::default()),
@@ -383,7 +433,7 @@ async fn supervise(
     first: Option<(Arc<Segment>, Option<Response>)>,
 ) -> Result<(), EngineError> {
     let mut tasks: JoinSet<Exit> = JoinSet::new();
-    let spawn_worker = |tasks: &mut JoinSet<Exit>, client: Option<Client>, job| {
+    let spawn_worker = |tasks: &mut JoinSet<Exit>, client: Client, job| {
         s.active.fetch_add(1, SeqCst);
         let s2 = s.clone();
         tasks.spawn(async move {
@@ -393,29 +443,31 @@ async fn supervise(
         });
     };
     match first {
-        Some(job) => spawn_worker(&mut tasks, Some(client0), Some(job)),
+        Some(job) => spawn_worker(&mut tasks, client0.clone(), Some(job)),
         None => {
             if let Some(seg) = claim(s) {
-                spawn_worker(&mut tasks, Some(client0), Some((seg, None)));
+                spawn_worker(&mut tasks, client0.clone(), Some((seg, None)));
             }
         }
     }
 
     let mut tick = tokio::time::interval(Duration::from_millis(150));
     let mut last_err: Option<EngineError> = None;
+    let mut watch = LineWatch::default();
+    let mut last_regrow = 0u64;
     loop {
         tokio::select! {
             joined = tasks.join_next(), if !tasks.is_empty() => {
                 match joined {
                     Some(Ok(Exit::GaveUp(e))) => {
                         last_err = Some(e);
-                        s.target.store(tasks.len().max(1), SeqCst);
+                        s.note_refusal(tasks.len());
                         if tasks.is_empty() {
                             s.set_fatal(last_err.clone().unwrap_or(EngineError::NoProgress));
                         }
                     }
                     Some(Ok(Exit::Limited)) => {
-                        s.target.store(tasks.len().max(1), SeqCst);
+                        s.note_refusal(tasks.len());
                     }
                     Some(Err(e)) => s.set_fatal(EngineError::Io(format!("worker crashed: {e}"))),
                     _ => {}
@@ -433,14 +485,27 @@ async fn supervise(
         if s.total_remaining() == 0 && tasks.is_empty() {
             break;
         }
+        let now = s.now_ms();
+        // Refused lines come back one at a time once the server has been quiet for a while.
+        let (target, wanted) = (s.target.load(SeqCst), s.wanted.load(SeqCst));
+        let quiet = s.cfg.regrow_after.as_millis() as u64;
+        if target < wanted && now.saturating_sub(s.last_refusal.load(SeqCst)) >= quiet && now.saturating_sub(last_regrow) >= quiet {
+            s.target.store(target + 1, SeqCst);
+            last_regrow = now;
+        }
+        if s.resumable.load(SeqCst) {
+            watch.check(s, now);
+        }
         let target = s.target.load(SeqCst);
-        while tasks.len() < target {
-            match claim(s) {
-                Some(seg) => spawn_worker(&mut tasks, None, Some((seg, None))),
-                None => break,
+        if now >= s.retry_until.load(SeqCst) {
+            while tasks.len() < target {
+                match claim(s) {
+                    Some(seg) => spawn_worker(&mut tasks, client0.clone(), Some((seg, None))),
+                    None => break,
+                }
             }
         }
-        if tasks.is_empty() && s.total_remaining() > 0 {
+        if tasks.is_empty() && s.total_remaining() > 0 && now >= s.retry_until.load(SeqCst) {
             // Nothing can make progress (e.g. open-ended stream was cut).
             s.set_fatal(last_err.clone().unwrap_or(EngineError::NoProgress));
         }
@@ -453,6 +518,93 @@ async fn supervise(
         return Err(if s.stop.load(SeqCst) == STOP_CANCEL { EngineError::Cancelled } else { EngineError::Paused });
     }
     Ok(())
+}
+
+/// Watches every line's speed and hands a stalled or crawling line's range to a fresh connection
+/// (IDM-style), so one bad connection can't hold up the end of a download.
+#[derive(Default)]
+struct LineWatch {
+    /// Per segment: (time, bytes received) samples over the last few seconds.
+    samples: HashMap<usize, std::collections::VecDeque<(u64, u64)>>,
+    /// The best single-line speed seen lately (bytes/s) and when.
+    peak: f64,
+    peak_at: u64,
+    last_kick: u64,
+}
+
+impl LineWatch {
+    const WINDOW_MS: u64 = 3000;
+
+    fn check(&mut self, s: &Shared, now: u64) {
+        let segs: Vec<Arc<Segment>> = s.segments.lock().iter().filter(|x| x.active.load(SeqCst)).cloned().collect();
+        let mut speeds: Vec<(Arc<Segment>, Option<f64>)> = Vec::new();
+        let mut keep = std::collections::HashSet::new();
+        for seg in segs {
+            let key = Arc::as_ptr(&seg) as usize;
+            keep.insert(key);
+            let since = seg.since.load(SeqCst);
+            let q = self.samples.entry(key).or_default();
+            // A new connection on this range starts a new history.
+            if q.front().is_some_and(|f| f.0 < since) {
+                q.clear();
+            }
+            q.push_back((now, seg.recv.load(SeqCst)));
+            while q.len() > 2 && now - q[1].0 >= Self::WINDOW_MS {
+                q.pop_front();
+            }
+            let (t0, b0) = q[0];
+            let speed = (now - t0 >= Self::WINDOW_MS / 2).then(|| (q.back().unwrap().1 - b0) as f64 * 1000.0 / (now - t0) as f64);
+            speeds.push((seg, speed));
+        }
+        self.samples.retain(|k, _| keep.contains(k));
+
+        if now - self.peak_at > 30_000 {
+            self.peak = 0.0;
+        }
+        for (_, sp) in &speeds {
+            if let Some(v) = sp {
+                if *v >= self.peak {
+                    self.peak = *v;
+                    self.peak_at = now;
+                }
+            }
+        }
+        // One replacement at a time, at most every half second.
+        if now - self.last_kick < 500 {
+            return;
+        }
+        let stall = s.cfg.stall_timeout.as_millis() as u64;
+        let grace = s.cfg.slow_grace.as_millis() as u64;
+        let known: Vec<f64> = speeds.iter().filter_map(|x| x.1).collect();
+        // Mid-download a slow line costs nothing: free lines split its range and take the rest.
+        // It only holds things up once its range is too small to split, so that's when it goes.
+        let unsplittable = 2 * s.cfg.min_split.max(2 * s.cfg.buffer_size as u64);
+        for (seg, sp) in &speeds {
+            let since = seg.since.load(SeqCst);
+            if since == 0 {
+                continue;
+            }
+            let silent = now.saturating_sub(seg.last_rx.load(SeqCst)) >= stall;
+            let slow = sp.is_some_and(|v| {
+                let others: Vec<f64> = known.iter().copied().filter(|o| *o != v).collect();
+                let others_avg = if others.is_empty() { None } else { Some(others.iter().sum::<f64>() / others.len() as f64) };
+                now - since >= grace
+                    && seg.remaining() < unsplittable
+                    && self.peak >= 64.0 * 1024.0
+                    && v < 0.15 * self.peak
+                    // Every line slow at once is the network, not this line.
+                    && others_avg.is_none_or(|a| a > 3.0 * v)
+            });
+            if silent || slow {
+                if let Some(t) = seg.kick.lock().as_ref() {
+                    seg.kicked.store(true, SeqCst);
+                    t.cancel();
+                    self.last_kick = now;
+                    return;
+                }
+            }
+        }
+    }
 }
 
 /// Take a waiting range, or split the largest active one in half.
@@ -488,14 +640,7 @@ fn claim(s: &Shared) -> Option<Arc<Segment>> {
     Some(new)
 }
 
-async fn worker(s: &Arc<Shared>, client: Option<Client>, mut job: Option<(Arc<Segment>, Option<Response>)>) -> Exit {
-    let client = match client {
-        Some(c) => c,
-        None => match make_client(&s.cfg) {
-            Ok(c) => c,
-            Err(e) => return Exit::GaveUp(e),
-        },
-    };
+async fn worker(s: &Arc<Shared>, client: Client, mut job: Option<(Arc<Segment>, Option<Response>)>) -> Exit {
     let mut failures = 0u32;
     let mut ever_received = false;
     loop {
@@ -515,7 +660,15 @@ async fn worker(s: &Arc<Shared>, client: Option<Client>, mut job: Option<(Arc<Se
             seg.active.store(false, SeqCst);
             return Exit::Stopped;
         }
-        let (written, res) = transfer(s, &client, &seg, resp).await;
+        let kick = s.token.child_token();
+        let now = s.now_ms().max(1);
+        seg.since.store(now, SeqCst);
+        seg.last_rx.store(now, SeqCst);
+        seg.kicked.store(false, SeqCst);
+        *seg.kick.lock() = Some(kick.clone());
+        let (written, res) = transfer(s, &client, &seg, resp, &kick).await;
+        *seg.kick.lock() = None;
+        seg.since.store(0, SeqCst);
         seg.active.store(false, SeqCst);
         if written > 0 {
             failures = 0;
@@ -527,6 +680,11 @@ async fn worker(s: &Arc<Shared>, client: Option<Client>, mut job: Option<(Arc<Se
         };
         if s.token.is_cancelled() {
             return Exit::Stopped;
+        }
+        // Replaced by the line watch: a fresh connection takes the range at once. A connection
+        // that got nothing at all still counts as a failure, so a dead server can't loop forever.
+        if seg.kicked.swap(false, SeqCst) && written > 0 {
+            continue;
         }
         let others = s.active.load(SeqCst) > 1;
         let refused = matches!(err, EngineError::Http(403 | 429 | 503)) || matches!(err, EngineError::Network(_));
@@ -541,7 +699,9 @@ async fn worker(s: &Arc<Shared>, client: Option<Client>, mut job: Option<(Arc<Se
         if failures > s.cfg.max_retries {
             return Exit::GaveUp(err);
         }
-        let backoff = (0.5 * 2f64.powi(failures as i32 - 1)).min(30.0) * (0.75 + fastrand::f64() * 0.5);
+        let mut backoff = (0.5 * 2f64.powi(failures as i32 - 1)).min(30.0) * (0.75 + fastrand::f64() * 0.5);
+        let told = s.retry_until.load(SeqCst).saturating_sub(s.now_ms());
+        backoff = backoff.max(told as f64 / 1000.0);
         tokio::select! {
             _ = s.token.cancelled() => return Exit::Stopped,
             _ = tokio::time::sleep(Duration::from_secs_f64(backoff)) => {}
@@ -550,10 +710,10 @@ async fn worker(s: &Arc<Shared>, client: Option<Client>, mut job: Option<(Arc<Se
 }
 
 /// Stream one range into the file. Returns bytes written plus the outcome.
-async fn transfer(s: &Shared, client: &Client, seg: &Segment, resp: Option<Response>) -> (u64, Result<(), EngineError>) {
+async fn transfer(s: &Shared, client: &Client, seg: &Segment, resp: Option<Response>, kick: &CancellationToken) -> (u64, Result<(), EngineError>) {
     let resp = match resp {
         Some(r) => r,
-        None => match range_request(s, client, seg).await {
+        None => match range_request(s, client, seg, kick).await {
             Ok(Some(r)) => r,
             Ok(None) => return (0, Ok(())),
             Err(e) => return (0, Err(e)),
@@ -565,7 +725,15 @@ async fn transfer(s: &Shared, client: &Client, seg: &Segment, resp: Option<Respo
     let mut written = 0u64;
     loop {
         let next = tokio::select! {
-            _ = s.token.cancelled() => return (written, Err(EngineError::Cancelled)),
+            _ = kick.cancelled() => {
+                if s.token.is_cancelled() {
+                    return (written, Err(EngineError::Cancelled));
+                }
+                // Replaced: keep what arrived, give the rest of the range back.
+                let r = flush(s, seg, &mut buf).await;
+                written += r.as_ref().map(|x| x.0).unwrap_or(0);
+                return (written, r.and(Err(EngineError::NoProgress)));
+            }
             n = tokio::time::timeout(s.cfg.read_timeout, stream.next()) => n,
         };
         match next {
@@ -600,6 +768,8 @@ async fn transfer(s: &Shared, client: &Client, seg: &Segment, resp: Option<Respo
                 return (written, Ok(()));
             }
             Ok(Some(Ok(chunk))) => {
+                seg.recv.fetch_add(chunk.len() as u64, SeqCst);
+                seg.last_rx.store(s.now_ms().max(1), SeqCst);
                 for l in &s.limiters {
                     l.acquire(chunk.len()).await;
                 }
@@ -646,7 +816,7 @@ async fn flush(s: &Shared, seg: &Segment, buf: &mut BytesMut) -> Result<(u64, bo
     Ok((n as u64, st.pos >= st.end))
 }
 
-async fn range_request(s: &Shared, client: &Client, seg: &Segment) -> Result<Option<Response>, EngineError> {
+async fn range_request(s: &Shared, client: &Client, seg: &Segment, kick: &CancellationToken) -> Result<Option<Response>, EngineError> {
     let (pos, end) = {
         let st = seg.st.lock();
         (st.pos, st.end)
@@ -664,7 +834,7 @@ async fn range_request(s: &Shared, client: &Client, seg: &Segment) -> Result<Opt
     if let Some(v) = &if_range {
         rb = rb.header(header::IF_RANGE, v);
     }
-    let resp = send(s, rb).await?;
+    let resp = send(s, rb, kick).await?;
     match resp.status() {
         StatusCode::PARTIAL_CONTENT => {
             let (total, _) = parse_size(&resp, pos);
@@ -678,7 +848,12 @@ async fn range_request(s: &Shared, client: &Client, seg: &Segment) -> Result<Opt
         }
         StatusCode::OK if if_range.is_some() => Err(EngineError::ValidatorMismatch),
         StatusCode::OK => Err(EngineError::Network("server ignored the range request".into())),
-        code => Err(EngineError::Http(code.as_u16())),
+        code => {
+            if matches!(code.as_u16(), 429 | 503) {
+                s.note_retry_after(resp.headers());
+            }
+            Err(EngineError::Http(code.as_u16()))
+        }
     }
 }
 
@@ -686,7 +861,7 @@ async fn first_request(s: &Shared, client: &Client) -> Result<Response, EngineEr
     let mut attempt = 0u32;
     loop {
         let rb = client.get(&s.req.url).headers(extra_headers(&s.req)).header(header::RANGE, "bytes=0-");
-        let res = send(s, rb).await.and_then(|r| match r.status() {
+        let res = send(s, rb, &s.token).await.and_then(|r| match r.status() {
             StatusCode::OK | StatusCode::PARTIAL_CONTENT => Ok(r),
             code => Err(EngineError::Http(code.as_u16())),
         });
@@ -705,10 +880,10 @@ async fn first_request(s: &Shared, client: &Client) -> Result<Response, EngineEr
     }
 }
 
-async fn send(s: &Shared, rb: reqwest::RequestBuilder) -> Result<Response, EngineError> {
+async fn send(s: &Shared, rb: reqwest::RequestBuilder, stop: &CancellationToken) -> Result<Response, EngineError> {
     let timeout = s.cfg.connect_timeout + s.cfg.read_timeout;
     tokio::select! {
-        _ = s.token.cancelled() => Err(EngineError::Cancelled),
+        _ = stop.cancelled() => Err(if s.token.is_cancelled() { EngineError::Cancelled } else { EngineError::NoProgress }),
         r = tokio::time::timeout(timeout, rb.send()) => match r {
             Err(_) => Err(EngineError::NoProgress),
             Ok(Err(e)) => Err(EngineError::Network(e.to_string())),
@@ -799,7 +974,7 @@ fn make_client(cfg: &EngineConfig) -> Result<Client, EngineError> {
         .connect_timeout(cfg.connect_timeout)
         .http1_only()
         .tcp_nodelay(true)
-        .pool_max_idle_per_host(1)
+        .pool_max_idle_per_host(MAX_CONNECTIONS)
         .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| EngineError::Network(e.to_string()))

@@ -4,6 +4,7 @@
   import Icon from '../lib/Icon.svelte';
   import type { BrowserStatus, Settings, UploadStatus } from '../lib/types';
   import { speed, when } from '../lib/format';
+  import { version } from '../lib/version';
 
   let s = $state<Settings>({ ...(app.settings as Settings) });
   let limitKb = $state(Math.round((app.settings?.speedLimit ?? 0) / 1024));
@@ -191,6 +192,7 @@
   </div>
 
   <div class="foot">
+    <span class="ver">DasIDM {version}</span>
     <button class="btn ghost" onclick={() => (app.panel = 'pass')}>Cancel</button>
     <button class="btn primary" onclick={save}><Icon name="check" />Save</button>
   </div>
@@ -334,7 +336,14 @@
   .foot {
     display: flex;
     justify-content: flex-end;
+    align-items: center;
     gap: 6px;
     margin-top: auto;
+  }
+  .foot .ver {
+    margin-right: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--fog);
   }
 </style>

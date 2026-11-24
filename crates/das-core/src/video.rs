@@ -629,6 +629,15 @@ pub fn download_args(tools: &Tools, spec: &VideoSpec, url: &str, save_dir: &Path
             "--no-simulate",
             "--concurrent-fragments",
             "8",
+            // YouTube slows long single requests; 10 MB pieces keep each one fast.
+            "--http-chunk-size",
+            "10M",
+            "--retries",
+            "10",
+            "--fragment-retries",
+            "10",
+            "--socket-timeout",
+            "20",
             "-P",
         ]
         .map(String::from),

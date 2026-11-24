@@ -155,10 +155,20 @@ export interface Settings {
   torrentPort: number;
   torrentUpnp: boolean;
   torrentDht: boolean;
+  torrentUtp: boolean;
+  protectDownloads: boolean;
   uploadLimit: number;
   seedRatio: number;
   seedMinutes: number;
   defaultTrackers: string;
+}
+
+/** The torrent upload cap while downloading, and the upload speed it's learned from. */
+export interface UploadStatus {
+  peakBps: number;
+  learnedSeconds: number;
+  learnSeconds: number;
+  capBps: number;
 }
 
 export interface ProbeInfo {

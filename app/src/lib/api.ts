@@ -1,4 +1,4 @@
-import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, VideoInfo } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, UploadStatus, VideoInfo } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -53,6 +53,7 @@ export const api = {
   /** Adds today's public tracker list (fetched from GitHub on request) and asks them all. */
   findMorePeers: (id: string) => invokeImpl<{ added: number; total: number }>('find_more_peers', { id }),
   publicTrackers: () => invokeImpl<string[]>('public_trackers'),
+  uploadStatus: () => invokeImpl<UploadStatus>('upload_status'),
   torrentFiles: (id: string) => invokeImpl<{ files: TorrentFile[]; chosen: number[] | null }>('torrent_files', { id }),
   setTorrentFiles: (id: string, only: number[]) => invokeImpl<void>('set_torrent_files', { id, only }),
   seed: (ids: string[]) => invokeImpl<void>('seed', { ids }),

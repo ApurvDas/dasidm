@@ -39,6 +39,7 @@ pub(super) fn torrent_settings(s: &Settings) -> TorrentSettings {
         upnp: s.torrent_upnp,
         dht: s.torrent_dht,
         lsd: true,
+        utp: s.torrent_utp,
         down_bps: s.speed_limit,
         up_bps: s.upload_limit,
         bind: None,
@@ -432,7 +433,11 @@ impl Inner {
             return (true, false);
         }
         let (mut changed, mut completed) = (false, false);
-        item.downloaded = s.downloaded;
+        // While the files are checked, librqbit counts the bytes checked so far; a new torrent
+        // would briefly show gigabytes "done". Keep the last real figure until the check ends.
+        if s.state != TState::Checking {
+            item.downloaded = s.downloaded;
+        }
         if s.total > 0 {
             item.size = Some(s.total);
         }

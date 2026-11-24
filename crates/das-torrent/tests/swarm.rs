@@ -5,7 +5,7 @@ use axum::extract::{Path as UrlPath, State};
 use axum::routing::get;
 use das_torrent::{AddOptions, Source, State as TState, TorrentSettings, Torrents};
 use librqbit::spawn_utils::BlockingSpawner;
-use librqbit::{AddTorrent, AddTorrentOptions, CreateTorrentOptions, ListenerOptions, Session, SessionOptions};
+use librqbit::{AddTorrent, AddTorrentOptions, CreateTorrentOptions, ListenerMode, ListenerOptions, Session, SessionOptions};
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener};
 use std::sync::Arc;
@@ -228,4 +228,74 @@ async fn swarm_with_live_trackers() {
     assert!(dl_dir.join("payload").join("a.bin").exists());
     t.shutdown().await;
     seeder.stop().await;
+}
+
+/// One file from a seeder that listens in `mode` to DasIDM's `Torrents` (uTP on); how long it took.
+async fn transfer_over(mode: ListenerMode, size: usize) -> Duration {
+    let tmp = tempfile::tempdir().unwrap();
+    let seed_dir = tmp.path().join("seed");
+    std::fs::create_dir_all(&seed_dir).unwrap();
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let data: Vec<u8> = (0..size).map(|_| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x as u8 }).collect();
+    std::fs::write(seed_dir.join("big.bin"), &data).unwrap();
+
+    let seed_port = free_port();
+    let tracker = Tracker { seeder: SocketAddrV4::new(Ipv4Addr::LOCALHOST, seed_port), announces: Default::default() };
+    let app = axum::Router::new().route("/{name}/announce", get(announce)).with_state(tracker);
+    let tl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker_url = format!("http://{}/t/announce", tl.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(tl, app).await.unwrap() });
+    let made = librqbit::create_torrent(
+        &seed_dir.join("big.bin"),
+        CreateTorrentOptions { name: None, trackers: vec![tracker_url], piece_length: Some(256 * 1024) },
+        &BlockingSpawner::new(2),
+    )
+    .await
+    .unwrap();
+    let torrent = made.as_bytes().unwrap().to_vec();
+    let seeder = Session::new_with_opts(
+        seed_dir.clone(),
+        SessionOptions {
+            dht: None,
+            disable_trackers: true,
+            disable_local_service_discovery: true,
+            persistence: None,
+            ipv4_only: true,
+            listen: Some(ListenerOptions { mode, listen_addr: SocketAddr::from((Ipv4Addr::LOCALHOST, seed_port)), ipv4_only: true, ..Default::default() }),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    seeder
+        .add_torrent(
+            AddTorrent::from_bytes(torrent.clone()),
+            Some(AddTorrentOptions { output_folder: Some(seed_dir.to_string_lossy().into_owned()), overwrite: true, ..Default::default() }),
+        )
+        .await
+        .unwrap();
+
+    let t = Torrents::new(&tmp.path().join("state"), settings(free_port()));
+    let start = Instant::now();
+    let hash = t
+        .add(&Source::File(torrent), AddOptions { output_dir: tmp.path().join("dl"), only_files: None, extra_trackers: vec![], paused: false })
+        .await
+        .unwrap();
+    wait_for("the transfer", 60, || t.stats(&hash).is_some_and(|s| s.finished)).await;
+    let took = start.elapsed();
+    assert!(std::fs::read(tmp.path().join("dl").join("big.bin")).unwrap() == data, "bytes differ");
+    t.shutdown().await;
+    seeder.stop().await;
+    took
+}
+
+/// uTP carries a whole torrent on Windows, and isn't far slower than TCP.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn utp_moves_a_torrent() {
+    let size = 48 << 20;
+    let utp = transfer_over(ListenerMode::UtpOnly, size).await;
+    let tcp = transfer_over(ListenerMode::TcpOnly, size).await;
+    let mb = |d: Duration| size as f64 / 1e6 / d.as_secs_f64();
+    eprintln!("48 MiB on 127.0.0.1: uTP {utp:.1?} ({:.0} MB/s), TCP {tcp:.1?} ({:.0} MB/s)", mb(utp), mb(tcp));
+    assert!(utp < tcp * 4 + Duration::from_secs(2), "uTP far slower than TCP: {utp:?} vs {tcp:?}");
 }

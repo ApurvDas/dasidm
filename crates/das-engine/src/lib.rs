@@ -123,6 +123,12 @@ pub struct EngineConfig {
     pub min_split: u64,
     /// Bytes buffered per connection before one positioned write.
     pub buffer_size: usize,
+    /// A line that receives nothing for this long gives its range to a fresh connection.
+    pub stall_timeout: Duration,
+    /// A line far slower than this download's best line for this long is replaced too.
+    pub slow_grace: Duration,
+    /// After the server refused extra lines, try one more line again after this quiet time.
+    pub regrow_after: Duration,
 }
 
 impl Default for EngineConfig {
@@ -134,6 +140,9 @@ impl Default for EngineConfig {
             max_retries: 8,
             min_split: 1024 * 1024,
             buffer_size: 512 * 1024,
+            stall_timeout: Duration::from_secs(8),
+            slow_grace: Duration::from_secs(6),
+            regrow_after: Duration::from_secs(20),
         }
     }
 }

@@ -188,6 +188,12 @@ async fn public_trackers(app: State<'_, App>) -> Res<Vec<String>> {
     app.core.public_trackers().await
 }
 
+/// The torrent upload cap in force and the upload speed it's based on.
+#[tauri::command]
+fn upload_status(app: State<'_, App>) -> das_core::UploadStatus {
+    app.core.upload_status()
+}
+
 #[tauri::command]
 fn remove_trackers(app: State<'_, App>, id: String, urls: Vec<String>) -> Res<usize> {
     app.core.remove_trackers(&id, urls)
@@ -483,6 +489,7 @@ fn main() {
             torrent_trackers,
             find_more_peers,
             public_trackers,
+            upload_status,
             add_trackers,
             remove_trackers,
             replace_tracker,

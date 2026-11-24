@@ -169,6 +169,8 @@ let settings: Settings = {
   torrentPort: 48213,
   torrentUpnp: true,
   torrentDht: true,
+  torrentUtp: true,
+  protectDownloads: true,
   uploadLimit: 0,
   seedRatio: 1,
   seedMinutes: 0,
@@ -417,6 +419,8 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
       mockTrackers = mockTrackers.map((t) => (t.url === args.old ? { ...t, url: args.new, state: 'notContacted', seeders: null, leechers: null, peers: 0, message: null } : t));
       return undefined as T;
     case 'find_more_peers':
+    case 'upload_status':
+      return { peakBps: 1_450_000, learnedSeconds: 600, learnSeconds: 60, capBps: 1_160_000 } as T;
     case 'public_trackers': {
       await new Promise((r) => setTimeout(r, 700));
       const list = ['udp://tracker.example-public.org:1337/announce', 'udp://open.example-tracker.net:6969/announce', 'https://tracker.example-best.io:443/announce'];

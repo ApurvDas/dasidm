@@ -6,8 +6,8 @@ use anyhow::{Context, Result, bail};
 use librqbit::api::TorrentIdOrHash;
 use librqbit::limits::LimitsConfig;
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerMode, ListenerOptions, ManagedTorrent,
-    Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState, TrackerState,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, ConnectionOptions, DhtSessionConfig, ListenerMode, ListenerOptions,
+    ManagedTorrent, PeerConnectionOptions, Session, SessionOptions, SessionPersistenceConfig, TorrentStatsState, TrackerState,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -22,6 +22,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 pub type Id20 = librqbit::dht::Id20;
 
+/// Peers kept connected per torrent.
+pub const PEER_LIMIT: usize = 200;
+/// How long an outgoing connection may take before its slot goes to the next address.
+pub const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[derive(Clone, Debug)]
 pub struct TorrentSettings {
     /// Port for incoming peers (TCP). 0 picks one at random.
@@ -30,6 +35,8 @@ pub struct TorrentSettings {
     pub dht: bool,
     /// Find peers on the local network too.
     pub lsd: bool,
+    /// Talk uTP (BitTorrent over UDP) as well as TCP: much of a qBittorrent swarm uses it.
+    pub utp: bool,
     /// Download / upload limits in bytes per second; 0 = none.
     pub down_bps: u64,
     pub up_bps: u64,
@@ -39,7 +46,7 @@ pub struct TorrentSettings {
 
 impl Default for TorrentSettings {
     fn default() -> Self {
-        Self { port: 0, upnp: true, dht: true, lsd: true, down_bps: 0, up_bps: 0, bind: None }
+        Self { port: 0, upnp: true, dht: true, lsd: true, utp: true, down_bps: 0, up_bps: 0, bind: None }
     }
 }
 
@@ -237,10 +244,20 @@ impl Torrents {
                     fastresume: true,
                     persistence: Some(SessionPersistenceConfig::Json { folder: Some(self.dir.join("session")) }),
                     listen: Some(ListenerOptions {
-                        mode: ListenerMode::TcpOnly,
+                        mode: if s.utp { ListenerMode::TcpAndUtp } else { ListenerMode::TcpOnly },
                         listen_addr: listen,
                         enable_upnp_port_forwarding: s.upnp,
                         ipv4_only: listen.is_ipv4(),
+                        ..Default::default()
+                    }),
+                    // Peers to keep per torrent (librqbit's default is 128; libtorrent's 200).
+                    peer_limit: Some(PEER_LIMIT),
+                    connect: Some(ConnectionOptions {
+                        peer_opts: Some(PeerConnectionOptions {
+                            // A dead address holds a peer slot until this runs out.
+                            connect_timeout: Some(CONNECT_TIMEOUT),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     }),
                     ratelimits: LimitsConfig { upload_bps: nz(s.up_bps), download_bps: nz(s.down_bps) },

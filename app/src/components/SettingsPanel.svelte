@@ -2,16 +2,25 @@
   import { api } from '../lib/api';
   import { app, run, toast } from '../lib/state.svelte';
   import Icon from '../lib/Icon.svelte';
-  import type { BrowserStatus, Settings } from '../lib/types';
-  import { when } from '../lib/format';
+  import type { BrowserStatus, Settings, UploadStatus } from '../lib/types';
+  import { speed, when } from '../lib/format';
 
   let s = $state<Settings>({ ...(app.settings as Settings) });
   let limitKb = $state(Math.round((app.settings?.speedLimit ?? 0) / 1024));
   let upKb = $state(Math.round((app.settings?.uploadLimit ?? 0) / 1024));
   const restartNeeded = $derived(
     !!app.settings &&
-      (s.torrentPort !== app.settings.torrentPort || s.torrentUpnp !== app.settings.torrentUpnp || s.torrentDht !== app.settings.torrentDht),
+      (s.torrentPort !== app.settings.torrentPort ||
+        s.torrentUpnp !== app.settings.torrentUpnp ||
+        s.torrentDht !== app.settings.torrentDht ||
+        s.torrentUtp !== app.settings.torrentUtp),
   );
+
+  // What the upload cap is based on (learned from this line's real uploads).
+  let upload = $state<UploadStatus | null>(null);
+  $effect(() => {
+    api.uploadStatus().then((u) => (upload = u)).catch(() => {});
+  });
 
   async function registerHandler() {
     const ok = await run(api.registerTorrentHandler().then(() => true));
@@ -127,6 +136,19 @@
     <span class="cap">Upload limit, KB/s</span>
     <input class="field" type="number" min="0" step="64" bind:value={upKb} />
   </label>
+  <label class="check">
+    <input type="checkbox" bind:checked={s.protectDownloads} disabled={upKb > 0} />
+    <span>Keep uploads from slowing downloads <em>(while anything downloads, torrents upload at 80% of your line's upload speed)</em></span>
+  </label>
+  {#if s.protectDownloads && upKb <= 0 && upload}
+    <span class="hint under">
+      {#if upload.learnedSeconds < upload.learnSeconds}
+        Learning your upload speed from seeding ({upload.learnedSeconds} of {upload.learnSeconds} s so far); until then uploads aren't held back.
+      {:else}
+        Fastest upload seen: {speed(upload.peakBps)}, so the cap while downloading is {speed(Math.max(upload.peakBps * 0.8, 32 * 1024))}.{upload.capBps > 0 ? ' Holding uploads to it now.' : ''}
+      {/if}
+    </span>
+  {/if}
   <label>
     <span class="cap">Trackers for every new torrent</span>
     <textarea class="field area" rows="3" spellcheck="false" bind:value={s.defaultTrackers} placeholder="One per line: udp://…, https://…"></textarea>
@@ -143,9 +165,10 @@
     <div class="checks">
       <label class="check"><input type="checkbox" bind:checked={s.torrentUpnp} /><span>Open the port on the router <em>(UPnP)</em></span></label>
       <label class="check"><input type="checkbox" bind:checked={s.torrentDht} /><span>Find peers without trackers <em>(DHT)</em></span></label>
+      <label class="check"><input type="checkbox" bind:checked={s.torrentUtp} /><span>Also use uTP <em>(reaches more peers; many clients prefer it)</em></span></label>
     </div>
   </div>
-  {#if restartNeeded}<span class="hint under">Port, UPnP and DHT changes apply the next time DasIDM starts.</span>{/if}
+  {#if restartNeeded}<span class="hint under">Port, UPnP, DHT and uTP changes apply the next time DasIDM starts.</span>{/if}
   <button class="btn" onclick={registerHandler}><Icon name="type-torrents" />Use DasIDM for magnets and .torrent files</button>
 
   <h4>Firefox</h4>

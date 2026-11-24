@@ -19,6 +19,10 @@ pub struct Settings {
     pub torrent_port: u16,
     pub torrent_upnp: bool,
     pub torrent_dht: bool,
+    /// Use uTP (BitTorrent over UDP) as well as TCP.
+    pub torrent_utp: bool,
+    /// While anything downloads, hold torrent uploads to 80% of the line's upload speed.
+    pub protect_downloads: bool,
     /// Upload limit for torrents, bytes per second, 0 = unlimited.
     pub upload_limit: u64,
     /// Stop seeding once uploaded / size reaches this (0 = no ratio limit).
@@ -50,6 +54,8 @@ impl Default for Settings {
             torrent_port: 0,
             torrent_upnp: true,
             torrent_dht: true,
+            torrent_utp: true,
+            protect_downloads: true,
             upload_limit: 0,
             seed_ratio: 1.0,
             seed_minutes: 0,

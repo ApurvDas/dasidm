@@ -18,6 +18,9 @@ use std::time::{Duration, Instant};
 #[path = "torrent_jobs.rs"]
 mod torrent_jobs;
 pub use torrent_jobs::is_torrent_link;
+#[path = "bandwidth.rs"]
+mod bandwidth;
+pub use bandwidth::{UploadLearned, UploadStatus};
 
 pub type Emit = Arc<dyn Fn(CoreEvent) + Send + Sync>;
 
@@ -47,6 +50,8 @@ struct Inner {
     torrents_idle_since: std::sync::atomic::AtomicI64,
     /// When the torrent view last asked for trackers or files (ms); counts as activity.
     torrents_viewed_at: std::sync::atomic::AtomicI64,
+    /// The shared speed limit and the torrent upload cap.
+    bandwidth: Mutex<bandwidth::Bandwidth>,
 }
 
 const HISTORY: usize = 240;
@@ -135,6 +140,7 @@ impl Manager {
                 previews: Mutex::new(HashMap::new()),
                 torrents_idle_since: std::sync::atomic::AtomicI64::new(0),
                 torrents_viewed_at: std::sync::atomic::AtomicI64::new(0),
+                bandwidth: Mutex::new(bandwidth::Bandwidth::load(data_dir)),
             }),
         })
     }
@@ -156,6 +162,7 @@ impl Manager {
             }
             if n % 8 == 0 {
                 self.inner.stop_idle_torrents().await;
+                self.inner.balance_bandwidth();
             }
         }
     }
@@ -185,8 +192,15 @@ impl Manager {
         self.inner.torrents.update_settings(torrent_jobs::torrent_settings(&s));
         self.inner.db.lock().save_settings(&s).map_err(|e| e.to_string())?;
         *self.inner.settings.write() = s;
+        self.inner.bandwidth.lock().reapply();
+        self.inner.balance_bandwidth();
         self.inner.schedule();
         Ok(())
+    }
+
+    /// The torrent upload cap in force and the upload speed it's based on.
+    pub fn upload_status(&self) -> UploadStatus {
+        self.inner.upload_status()
     }
 
     pub async fn probe(&self, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {

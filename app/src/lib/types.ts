@@ -15,10 +15,11 @@ export interface ItemView {
   error: string | null;
   connections: number;
   resumable: boolean;
-  kind: 'http' | 'video' | 'torrent';
+  kind: 'http' | 'video' | 'torrent' | 'convert';
   /** Video and music links: what was chosen. */
   media: MediaView | null;
   torrent: TorrentView | null;
+  convert: ConvertView | null;
 }
 
 export interface TorrentView {
@@ -102,6 +103,55 @@ export const isMusicLink = (s: string) => {
   }
   return false;
 };
+
+/** A conversion batch in the list. */
+export interface ConvertView {
+  preset: Preset;
+  label: string;
+  files: number;
+  done: number;
+  skipped: number;
+  failed: number;
+  note: string | null;
+  keepsCover: boolean;
+}
+
+export type Preset =
+  | 'mp3-320' | 'mp3-v0' | 'mp3-256' | 'mp3-192' | 'aac-256' | 'opus-160' | 'opus-128' | 'vorbis-q6'
+  | 'alac' | 'flac' | 'flac-16' | 'wav-16';
+
+/** The presets as the convert sheet offers them. */
+export const PRESETS: { id: Preset; label: string; hint: string; lossless: boolean; kbps?: number }[] = [
+  { id: 'mp3-320', label: 'MP3 320 kbps', hint: 'Plays everywhere', lossless: false, kbps: 320 },
+  { id: 'mp3-v0', label: 'MP3 V0 (VBR)', hint: 'Near 320 quality, smaller', lossless: false, kbps: 245 },
+  { id: 'mp3-256', label: 'MP3 256 kbps', hint: '', lossless: false, kbps: 256 },
+  { id: 'mp3-192', label: 'MP3 192 kbps', hint: 'Smaller files', lossless: false, kbps: 192 },
+  { id: 'aac-256', label: 'AAC 256 kbps (.m4a)', hint: 'iPhone and Apple apps', lossless: false, kbps: 256 },
+  { id: 'opus-160', label: 'Opus 160 kbps', hint: 'Best quality per MB; no cover art', lossless: false, kbps: 160 },
+  { id: 'opus-128', label: 'Opus 128 kbps', hint: 'Small phone files; no cover art', lossless: false, kbps: 128 },
+  { id: 'vorbis-q6', label: 'Ogg Vorbis (q6)', hint: 'About 192 kbps; no cover art', lossless: false, kbps: 192 },
+  { id: 'alac', label: 'ALAC (.m4a)', hint: 'Lossless for Apple Music', lossless: true },
+  { id: 'flac', label: 'FLAC', hint: 'Lossless, same sample rate and bit depth', lossless: true },
+  { id: 'flac-16', label: 'FLAC 16-bit, 44.1 or 48 kHz', hint: 'Hi-res made smaller; CD quality from 44.1 kHz sources', lossless: true },
+  { id: 'wav-16', label: 'WAV 16-bit', hint: 'Uncompressed; no tags or cover in many players', lossless: true },
+];
+
+export type Verdict = { kind: 'ok' } | { kind: 'warn'; note: string } | { kind: 'skip'; note: string };
+
+export interface PlannedFile {
+  path: string;
+  name: string;
+  size: number;
+  format: string | null;
+  verdict: Verdict | null;
+}
+
+export interface ConvertPlan {
+  files: PlannedFile[];
+  outDir: string | null;
+  keepsCover: boolean;
+  ffmpegReady: boolean;
+}
 
 /** The public details of a music share link. */
 export interface MusicInfo {

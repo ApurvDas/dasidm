@@ -122,6 +122,8 @@
     if (i.status === 'queued') return 'WAITING';
     const p = app.progress[i.id];
     const pc = pctOf(i);
+    // A conversion runs on this PC; the network doesn't matter to it.
+    if (i.kind === 'convert') return `CONVERTING · ${pc ?? 0}%`;
     if (!online) return pc == null ? 'NO NETWORK' : `NO NETWORK · ${pc}%`;
     if (i.kind === 'torrent') {
       if (p?.torrent?.checking) return `CHECKING · ${pc ?? 0}%`;

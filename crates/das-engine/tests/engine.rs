@@ -312,6 +312,7 @@ async fn a_trickling_line_is_replaced() {
     let h = quick_engine().start(req(format!("{base}/file?size={size}&delay=300&key=trickle&trickle=300000"), dir.path(), 4), None, vec![]);
     let done = tokio::time::timeout(Duration::from_secs(30), h.wait()).await.expect("too slow").unwrap();
     assert!(std::fs::read(&done.path).unwrap() == expected(size), "content mismatch");
+    assert!(h.snapshot().replaced >= 1, "the slow line should have been replaced");
     // Its last unsplittable 512 KiB alone would take about 10 s at that pace; replaced, the
     // whole download takes 2-3 s (6 s leaves room for a busy machine).
     assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
@@ -329,4 +330,16 @@ async fn lines_come_back_after_the_server_stops_refusing() {
     let (_, late, refused) = lab("refuse");
     assert!(refused > 0, "the server should have refused some lines");
     assert!(late >= 5, "lines should grow back towards 6 once refusals stop; peak later was {late}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn healthy_lines_are_left_alone() {
+    let base = server().await;
+    let dir = tempfile::tempdir().unwrap();
+    // 8 even lines, nothing slow: the end of the download must not look like a crawling line.
+    let size = 16 * 1024 * 1024;
+    let h = quick_engine().start(req(format!("{base}/file?size={size}&delay=2000"), dir.path(), 8), None, vec![]);
+    let done = tokio::time::timeout(Duration::from_secs(60), h.wait()).await.expect("too slow").unwrap();
+    assert!(std::fs::read(&done.path).unwrap() == expected(size), "content mismatch");
+    assert_eq!(h.snapshot().replaced, 0, "a healthy line was replaced");
 }

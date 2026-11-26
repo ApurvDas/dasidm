@@ -1,4 +1,4 @@
-import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, UploadStatus, VideoInfo, MusicInfo, MusicStore } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, UploadStatus, VideoInfo, MusicInfo, MusicStore, ConvertPlan, Preset } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -57,6 +57,15 @@ export const api = {
   /** A Spotify / Amazon Music share link's public details (never its audio). */
   musicLookup: (url: string) => invokeImpl<MusicInfo>('music_lookup', { url }),
   musicStores: () => invokeImpl<MusicStore[]>('music_stores'),
+  /** What converting these files or folders would do. */
+  convertPlan: (paths: string[], preset: Preset, outDir: string | null) => invokeImpl<ConvertPlan>('convert_plan', { paths, preset, outDir }),
+  addConvert: (paths: string[], preset: Preset, outDir: string | null) => invokeImpl<ItemView>('add_convert', { req: { paths, preset, outDir } }),
+  pickAudioFiles: () => invokeImpl<string[]>('pick_audio_files'),
+  onOpenConvert: async (cb: (paths: string[]) => void) => {
+    if (!inTauri) return;
+    const event = await import('@tauri-apps/api/event');
+    await event.listen<string[]>('open-convert', (e) => cb(e.payload));
+  },
   /** Opens a store's search in the browser; Rust builds the address. */
   openStoreSearch: (store: string, query: string) => invokeImpl<void>('open_store_search', { store, query }),
   torrentFiles: (id: string) => invokeImpl<{ files: TorrentFile[]; chosen: number[] | null }>('torrent_files', { id }),

@@ -104,6 +104,9 @@
           {#if isTorrent}
             <b class="code" title="Peers in the swarm">SWARM</b>
             <span class="lbl full">From {tl ? `${tl.peers} peers · ${tl.seeds} seeds` : 'peers'}</span>
+          {:else if item.convert}
+            <b class="code" title="Music on this PC">FILES</b>
+            <span class="lbl full">From {item.convert.files} {item.convert.files === 1 ? 'file' : 'files'} on this PC</span>
           {:else}
             <b class="code" title={item.url}>{sourceCode(item.url)}</b>
             <span class="lbl full" title={item.url}>From {host(item.url)}</span>
@@ -127,6 +130,13 @@
           {/if}
         </div>
       </div>
+      {#if item.convert}
+        <div class="seg three">
+          <div><span class="lbl">Files</span><b>{item.convert.done}<span class="sub"> / {item.convert.files}</span></b></div>
+          <div><span class="lbl">Format</span><b>{item.convert.label}</b></div>
+          <div><span class="lbl">Cover</span><b>{item.convert.keepsCover ? 'Kept' : 'No'}</b></div>
+        </div>
+      {:else}
       <div class="seg three">
         <div>
           <span class="lbl">Speed</span>
@@ -150,6 +160,7 @@
           <div><span class="lbl">Resume</span><b>{item.resumable || item.status === 'done' ? 'Yes' : 'No'}</b></div>
         {/if}
       </div>
+      {/if}
 
       <div class="scan">
         {#if isTorrent && item.status !== 'done'}
@@ -164,6 +175,10 @@
             {#if isTorrent}
               {item.torrent?.seeding ? 'Seeding · ' : ''}{item.torrent?.chosenFiles ?? item.torrent?.files ?? 0} of {item.torrent?.files ?? 0}
               {item.torrent?.files === 1 ? 'file' : 'files'}{tl?.checking ? ' · checking pieces' : ''}
+            {:else if item.convert}
+              {item.convert.label} · {item.convert.done} of {item.convert.files} {item.convert.files === 1 ? 'file' : 'files'}{item.convert.skipped
+                ? ` · ${item.convert.skipped} left out`
+                : ''}{item.convert.failed ? ` · ${item.convert.failed} failed` : ''}{item.convert.keepsCover ? '' : ' · no cover art'}
             {:else if item.status === 'done'}
               {catName} · all parts arrived
             {:else if item.status === 'downloading' && p?.phase}
@@ -176,7 +191,7 @@
           </span>
           {#if isTorrent}
             <button class="partsbtn" onclick={() => (app.partsOpen = true)}>Open torrent<kbd>P</kbd></button>
-          {:else if item.status === 'downloading' && item.kind !== 'video'}
+          {:else if item.status === 'downloading' && item.kind !== 'video' && item.kind !== 'convert'}
             <button class="partsbtn" onclick={() => (app.partsOpen = true)}>Open parts<kbd>P</kbd></button>
           {/if}
         </div>
@@ -184,6 +199,8 @@
 
       {#if item.status === 'failed' && item.error}
         <p class="err"><Icon name="alert" /> {item.error}</p>
+      {:else if item.convert?.note && (item.convert.failed || item.convert.skipped)}
+        <p class="err"><Icon name="alert" /> {item.convert.note}</p>
       {/if}
     </article>
 

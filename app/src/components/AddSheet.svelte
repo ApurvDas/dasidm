@@ -353,6 +353,7 @@
 
   <div class="foot">
     {#if !music}<button class="btn ghost left" onclick={openTorrentFile} title="Open a .torrent file from this PC"><Icon name="type-torrents" />Open .torrent…</button>{/if}
+    <button class="btn ghost" class:left={music} onclick={() => { close(); app.convert = []; }} title="Convert music you have on this PC to another format"><Icon name="type-music" />Convert music…</button>
     <button class="btn ghost" onclick={close}>{music ? 'Close' : 'Cancel'}<kbd>Esc</kbd></button>
     {#if music}
       <!-- nothing to download: the music card's store buttons are the actions -->

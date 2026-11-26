@@ -43,7 +43,11 @@ export function actionsFor(item: ItemView): Action[][] {
   }
 
   const more: Action[] = [{ id: 'folder', label: 'Show in folder', icon: 'folder', run: () => run(api.openFolder(id)) }];
-  if (torrent || (item.status === 'downloading' && item.kind !== 'video')) {
+  // Music you have: convert it to another format or quality.
+  if (done && item.kind !== 'convert' && item.filePath && /\.(flac|wav|aiff?|alac|m4a|mp3|ogg|opus|wv|ape)$/i.test(item.filePath)) {
+    more.push({ id: 'convert', label: 'Convert…', icon: 'type-music', run: () => (app.convert = [item.filePath!]) });
+  }
+  if (torrent || (item.status === 'downloading' && item.kind !== 'video' && item.kind !== 'convert')) {
     more.push({
       id: 'details',
       label: torrent ? 'Open torrent' : 'Open parts',

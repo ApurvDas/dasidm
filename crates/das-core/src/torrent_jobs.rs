@@ -145,6 +145,7 @@ impl Manager {
                 allow_html: false,
                 kind: Kind::Torrent,
                 video: None,
+                convert: None,
                 torrent: Some(TorrentSpec {
                     info_hash: hash,
                     name: p.name.clone(),

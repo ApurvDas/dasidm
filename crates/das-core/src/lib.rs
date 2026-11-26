@@ -1,6 +1,7 @@
 //! DasIDM application core: persistence, queue, categories, settings. UI-agnostic.
 
 pub mod categories;
+pub mod convert;
 mod db;
 pub mod links;
 pub mod music;
@@ -12,6 +13,6 @@ pub mod video;
 
 pub use das_engine::ProbeInfo;
 pub use das_torrent::{FileEntry, Preview as TorrentPreview, TrackerView};
-pub use manager::{Emit, Manager, UploadLearned, UploadStatus, is_torrent_link};
+pub use manager::{AddConvertRequest, ConvertPlan, Emit, Manager, PlannedFile, UploadLearned, UploadStatus, is_torrent_link};
 pub use model::{AddRequest, CoreEvent, ItemView, Progress, Status, Totals};
 pub use settings::Settings;

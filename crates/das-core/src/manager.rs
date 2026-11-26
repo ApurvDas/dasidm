@@ -20,6 +20,9 @@ mod torrent_jobs;
 pub use torrent_jobs::is_torrent_link;
 #[path = "bandwidth.rs"]
 mod bandwidth;
+#[path = "convert_jobs.rs"]
+mod convert_jobs;
+pub use convert_jobs::{AddConvertRequest, ConvertPlan, PlannedFile};
 pub use bandwidth::{UploadLearned, UploadStatus};
 
 pub type Emit = Arc<dyn Fn(CoreEvent) + Send + Sync>;
@@ -52,6 +55,8 @@ struct Inner {
     torrents_viewed_at: std::sync::atomic::AtomicI64,
     /// The shared speed limit and the torrent upload cap.
     bandwidth: Mutex<bandwidth::Bandwidth>,
+    /// Quitting: stopped conversions stay "running" so they carry on at the next start.
+    quitting: AtomicBool,
 }
 
 const HISTORY: usize = 240;
@@ -60,6 +65,8 @@ const HISTORY: usize = 240;
 struct State {
     items: HashMap<String, Item>,
     running: HashMap<String, Running>,
+    /// Conversion batches, kept apart from `running` so they never count as downloads.
+    converting: HashMap<String, crate::convert::ConvertJob>,
     next_position: i64,
 }
 
@@ -141,6 +148,7 @@ impl Manager {
                 torrents_idle_since: std::sync::atomic::AtomicI64::new(0),
                 torrents_viewed_at: std::sync::atomic::AtomicI64::new(0),
                 bandwidth: Mutex::new(bandwidth::Bandwidth::load(data_dir)),
+                quitting: AtomicBool::new(false),
             }),
         })
     }
@@ -265,6 +273,7 @@ impl Manager {
                 kind: Kind::Http,
                 video: None,
                 torrent: None,
+                convert: None,
             };
             let _ = self.inner.db.lock().save_item(&item);
             let view = ItemView::from(&item);
@@ -369,6 +378,7 @@ impl Manager {
                     kind: Kind::Video,
                     video: Some(spec),
                     torrent: None,
+                    convert: None,
                 };
                 let _ = self.inner.db.lock().save_item(&item);
                 let view = ItemView::from(&item);
@@ -401,6 +411,9 @@ impl Manager {
         {
             let mut st = self.inner.state.lock();
             for id in ids {
+                if self.inner.pause_convert(&st, id) {
+                    continue; // becomes Paused when the batch stops
+                }
                 if let Some(r) = st.running.get(id) {
                     r.job.pause(); // becomes Paused when the job stops
                 } else if let Some(item) = st.items.get_mut(id) {
@@ -429,6 +442,15 @@ impl Manager {
                             changed.push(item.clone());
                         }
                         continue;
+                    }
+                    // Retry a batch: files that failed get another go (finished ones are kept).
+                    if item.kind == Kind::Convert && matches!(item.status, Status::Paused | Status::Failed) {
+                        if let Some(c) = item.convert.as_mut() {
+                            for f in c.files.iter_mut().filter(|f| f.state == crate::convert::FileState::Failed) {
+                                f.state = crate::convert::FileState::Pending;
+                                f.note = None;
+                            }
+                        }
                     }
                     if matches!(item.status, Status::Paused | Status::Failed) {
                         item.status = Status::Queued;
@@ -461,12 +483,22 @@ impl Manager {
         {
             let mut st = self.inner.state.lock();
             for id in ids {
-                if st.running.contains_key(id) {
+                if st.running.contains_key(id) || st.converting.contains_key(id) {
                     continue;
                 }
                 if let Some(item) = st.items.get_mut(id) {
                     if item.kind == Kind::Torrent {
                         continue; // a torrent re-checks its own pieces; nothing to start over
+                    }
+                    if item.kind == Kind::Convert {
+                        Inner::restart_convert(item);
+                        item.downloaded = 0;
+                        item.error = None;
+                        item.file_path = None;
+                        item.finished_at = None;
+                        item.status = Status::Queued;
+                        changed.push(item.clone());
+                        continue;
                     }
                     if let Some(r) = item.resume.take() {
                         let _ = std::fs::remove_file(part_path(&r.file_path));
@@ -497,7 +529,13 @@ impl Manager {
             let mut st = self.inner.state.lock();
             for id in ids {
                 let running = st.running.remove(id);
+                let converting = st.converting.remove(id);
                 let Some(item) = st.items.remove(id) else { continue };
+                if item.kind == Kind::Convert {
+                    self.inner.remove_convert(converting, &item, delete_files);
+                    removed.push(id.clone());
+                    continue;
+                }
                 if item.kind == Kind::Torrent {
                     self.inner.remove_torrent(&item, delete_files);
                     removed.push(id.clone());
@@ -556,6 +594,15 @@ impl Manager {
 
     /// Save everything (call before the app exits).
     pub async fn shutdown(&self) {
+        self.inner.quitting.store(true, Ordering::SeqCst);
+        // Stop conversions (ffmpeg and its half-written file go); they resume at the next start.
+        let jobs: Vec<crate::convert::ConvertJob> = self.inner.state.lock().converting.values().cloned().collect();
+        for j in &jobs {
+            j.pause();
+        }
+        for j in &jobs {
+            let _ = tokio::time::timeout(Duration::from_secs(5), j.wait()).await;
+        }
         self.inner.checkpoint().await;
         self.inner.torrents.shutdown().await;
     }
@@ -574,6 +621,7 @@ impl Inner {
 
     /// Start queued downloads up to the concurrency limit, in queue order.
     fn schedule(self: &Arc<Self>) {
+        self.schedule_converts();
         let max = self.settings.read().max_concurrent.max(1);
         let mut started = Vec::new();
         {
@@ -593,6 +641,9 @@ impl Inner {
                     break;
                 }
                 let item = st.items.get_mut(&id).unwrap();
+                if item.kind == Kind::Convert {
+                    continue; // conversions run on their own (`schedule_converts`)
+                }
                 if item.kind == Kind::Torrent {
                     // Never the HTTP engine's job (older versions could leave one Queued).
                     item.status = Status::Downloading;
@@ -801,7 +852,7 @@ impl Inner {
         let (mut tchanged, mut tcompleted) = (Vec::new(), Vec::new());
         let (items, totals) = {
             let mut st = self.state.lock();
-            if st.running.is_empty() && !Inner::has_active_torrents(&st) {
+            if st.running.is_empty() && st.converting.is_empty() && !Inner::has_active_torrents(&st) {
                 // Send one final all-zero update so the board doesn't keep showing the last speed.
                 if self.was_running.swap(false, Ordering::Relaxed) {
                     let queued = st.items.values().filter(|i| i.status == Status::Queued).count();
@@ -815,7 +866,8 @@ impl Inner {
             let now = Instant::now();
             let mut out = Vec::with_capacity(st.running.len());
             let mut totals = Totals::default();
-            let State { items, running, .. } = &mut *st;
+            let State { items, running, converting, .. } = &mut *st;
+            self.convert_progress(items, converting, &mut out);
             for (id, r) in running.iter_mut() {
                 let snap = match &r.job {
                     Job::Http(h) => h.snapshot(),

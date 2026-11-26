@@ -121,6 +121,16 @@ impl Tools {
     pub fn ffmpeg_dir(&self) -> PathBuf {
         self.dir.join("ffmpeg")
     }
+    pub fn ffmpeg(&self) -> PathBuf {
+        self.ffmpeg_dir().join("ffmpeg.exe")
+    }
+    pub fn ffprobe(&self) -> PathBuf {
+        self.ffmpeg_dir().join("ffprobe.exe")
+    }
+    /// What the audio converter needs (ffmpeg alone).
+    pub fn ffmpeg_ready(&self) -> bool {
+        self.ffmpeg().is_file() && self.ffprobe().is_file()
+    }
     pub fn deno(&self) -> PathBuf {
         self.dir.join("deno").join("deno.exe")
     }

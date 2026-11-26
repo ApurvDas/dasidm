@@ -128,6 +128,7 @@
       if (!p || p.speed === 0) return pc == null ? 'FINDING PEERS' : `FINDING PEERS · ${pc}%`;
       return `${pc ?? '··'}% · ${p.torrent?.peers ?? 0} PEERS`;
     }
+    if (i.kind === 'convert') return `CONVERTING · ${pc ?? 0}%`;
     if (i.kind === 'video') {
       if (p?.phase && isPostPhase(p.phase)) return PHASE_BOARD[p.phase];
       if (!p || p.speed === 0) return pc == null ? 'STARTING' : `STARTING · ${pc}%`;

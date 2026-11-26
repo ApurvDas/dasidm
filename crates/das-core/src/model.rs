@@ -23,6 +23,8 @@ pub enum Kind {
     Video,
     /// A torrent or magnet link, fetched by the BitTorrent session.
     Torrent,
+    /// Music the user owns, converted to another format by ffmpeg (nothing is downloaded).
+    Convert,
 }
 
 /// What a torrent item remembers.
@@ -87,6 +89,8 @@ pub struct Item {
     pub video: Option<VideoSpec>,
     #[serde(default)]
     pub torrent: Option<TorrentSpec>,
+    #[serde(default)]
+    pub convert: Option<crate::convert::ConvertSpec>,
 }
 
 /// What the UI sees for one row.
@@ -111,6 +115,23 @@ pub struct ItemView {
     /// Video and music links: what was chosen and what it is.
     pub media: Option<MediaView>,
     pub torrent: Option<TorrentView>,
+    pub convert: Option<ConvertView>,
+}
+
+/// A conversion batch, for the list and the pass.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConvertView {
+    pub preset: crate::convert::Preset,
+    /// "MP3 320".
+    pub label: String,
+    pub files: usize,
+    pub done: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    /// The first reason a file was skipped or failed.
+    pub note: Option<String>,
+    pub keeps_cover: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -181,6 +202,20 @@ impl From<&Item> for ItemView {
                     _ => 0.0,
                 },
                 seeding: t.seeding,
+            }),
+            convert: i.convert.as_ref().map(|c| {
+                use crate::convert::FileState as F;
+                let count = |s: F| c.files.iter().filter(|f| f.state == s).count();
+                ConvertView {
+                    preset: c.preset,
+                    label: c.preset.label().to_string(),
+                    files: c.files.len(),
+                    done: count(F::Done),
+                    skipped: count(F::Skipped),
+                    failed: count(F::Failed),
+                    note: c.files.iter().find(|f| f.state != F::Done && f.note.is_some()).and_then(|f| f.note.clone()),
+                    keeps_cover: c.preset.keeps_cover(),
+                }
             }),
         }
     }

@@ -27,6 +27,7 @@ function item(p: Partial<ItemView> & Pick<ItemView, 'id' | 'fileName' | 'status'
     kind: 'http',
     media: null,
     torrent: null,
+    convert: null,
     url: `https://cdn.example.net/${encodeURIComponent(p.fileName)}`,
     saveDir: `C:\\Users\\you\\Downloads\\${p.category}`,
     filePath: null,
@@ -439,6 +440,38 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
         { id: 'qobuz', name: 'Qobuz', sells: 'FLAC in CD quality, and 24-bit hi-res where the release has it' },
         { id: 'hdtracks', name: 'HDtracks', sells: 'Hi-res FLAC and ALAC' },
       ] as T;
+    case 'pick_audio_files':
+      return ['C:\\Users\\you\\Music\\Harbour Lights - Night Shift\\01 Low Tide.flac', 'C:\\Users\\you\\Music\\Harbour Lights - Night Shift\\02 Breakwater.flac'] as T;
+    case 'convert_plan': {
+      await new Promise((r) => setTimeout(r, 300));
+      const { paths, preset } = args as { paths: string[]; preset: string };
+      const lossy = !['alac', 'flac', 'flac-16', 'wav-16'].includes(preset);
+      const names = paths.length ? ['01 Low Tide.flac', '02 Breakwater.flac', '03 Lanterns.mp3'] : [];
+      return {
+        files: names.map((n, i) => ({
+          path: `C:\\Users\\you\\Music\\Harbour Lights - Night Shift\\${n}`,
+          name: n,
+          size: [41e6, 38e6, 9e6][i],
+          format: n.endsWith('.mp3') ? 'MP3 320 kbps' : 'FLAC 24-bit 96 kHz',
+          verdict: n.endsWith('.mp3')
+            ? lossy ? { kind: 'warn', note: 'Lossy to lossy loses a little more quality' } : { kind: 'warn', note: "From a lossy file this won't sound better, only bigger" }
+            : preset === 'flac' ? { kind: 'skip', note: 'Already FLAC' } : { kind: 'ok' },
+        })),
+        outDir: `C:\\Users\\you\\Music\\Harbour Lights - Night Shift\\${preset}`,
+        keepsCover: !['opus-160', 'opus-128', 'vorbis-q6', 'wav-16'].includes(preset),
+        ffmpegReady: true,
+      } as T;
+    }
+    case 'add_convert': {
+      const req = (args as { req: { paths: string[]; preset: string } }).req;
+      const it = item({ id: 'c' + Date.now(), fileName: `Harbour Lights - Night Shift → ${req.preset}`, status: 'downloading', category: 'music', size: 88e6, downloaded: 0, connections: 0 });
+      it.kind = 'convert';
+      it.convert = { preset: req.preset as never, label: req.preset.toUpperCase(), files: 3, done: 1, skipped: 0, failed: 0, note: null, keepsCover: true };
+      it.addedAt = Date.now();
+      items.push(it);
+      emit({ type: 'upsert', item: { ...it } });
+      return it as T;
+    }
     case 'open_store_search':
       return undefined as T;
     case 'upload_status':

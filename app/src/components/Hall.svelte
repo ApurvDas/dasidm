@@ -70,6 +70,7 @@
     switch (i.status) {
       case 'downloading': {
         const pc = percent(p?.downloaded ?? i.downloaded, p?.size ?? i.size);
+        if (i.kind === 'convert' && i.convert) return `Converting to ${i.convert.label} · ${i.convert.done + i.convert.skipped} of ${i.convert.files}`;
         if (p?.phase && isPostPhase(p.phase)) return `${PHASE[p.phase]}…`;
         // The percentage sits beside the pieces bar; the text carries the rest.
         if (i.kind === 'torrent') {
@@ -86,6 +87,8 @@
         return i.error ?? 'Failed';
       case 'done':
         if (i.torrent?.seeding) return `Seeding · ↑ ${speed(p?.torrent?.upSpeed)} · ratio ${i.torrent.ratio.toFixed(2)}`;
+        if (i.convert && (i.convert.failed || i.convert.skipped))
+          return `Converted ${i.convert.done} of ${i.convert.files}${i.convert.skipped ? ` · ${i.convert.skipped} left out` : ''}${i.convert.failed ? ` · ${i.convert.failed} failed` : ''}`;
         return `Finished ${when(i.finishedAt)}`;
     }
   }

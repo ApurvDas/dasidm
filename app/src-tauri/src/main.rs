@@ -243,6 +243,39 @@ async fn pick_torrent_file(app: AppHandle) -> Option<String> {
     dialog.blocking_pick_file()?.into_path().ok().map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Pick music files to convert.
+#[tauri::command]
+async fn pick_audio_files(app: AppHandle) -> Vec<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Choose music to convert")
+        .add_filter("Music", &["flac", "wav", "aif", "aiff", "alac", "m4a", "mp3", "ogg", "opus", "wv", "ape", "aac", "wma"]);
+    if let Some(w) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&w);
+    }
+    dialog
+        .blocking_pick_files()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|f| f.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect()
+}
+
+/// What converting these files or folders to `preset` would do.
+#[tauri::command]
+async fn convert_plan(app: State<'_, App>, paths: Vec<String>, preset: das_core::convert::Preset, out_dir: Option<String>) -> Res<das_core::ConvertPlan> {
+    Ok(app.core.convert_plan(paths, preset, out_dir).await)
+}
+
+/// Add a conversion batch to the list.
+#[tauri::command]
+async fn add_convert(app: State<'_, App>, req: das_core::AddConvertRequest) -> Res<ItemView> {
+    app.core.add_convert(req).await
+}
+
 /// Make DasIDM open magnet links and .torrent files (for this Windows user only).
 #[tauri::command]
 fn register_torrent_handler() -> Res<()> {
@@ -514,6 +547,9 @@ fn main() {
             music_lookup,
             music_stores,
             open_store_search,
+            pick_audio_files,
+            convert_plan,
+            add_convert,
             add_trackers,
             remove_trackers,
             replace_tracker,
@@ -600,6 +636,16 @@ fn main() {
             if let WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
                 if let Some(p) = paths.iter().find(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("torrent"))) {
                     let _ = window.app_handle().emit("open-add", PendingAdd::link(p.to_string_lossy()));
+                } else {
+                    // Music files or folders dropped on the window: open the convert sheet with them.
+                    let music: Vec<String> = paths
+                        .iter()
+                        .filter(|p| p.is_dir() || das_core::convert::is_audio_file(p))
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .collect();
+                    if !music.is_empty() {
+                        let _ = window.app_handle().emit("open-convert", music);
+                    }
                 }
             }
             if let WindowEvent::Destroyed = event {

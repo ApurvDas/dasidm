@@ -844,7 +844,7 @@ impl VideoJob {
 /// that are not UTF-8. `lines()` fails on those and, once the reader stopped, yt-dlp's next write
 /// to the closed pipe died with "[Errno 22] Invalid argument". Bytes that don't decode become
 /// U+FFFD instead and the reader carries on. `None` only at the end of the stream.
-async fn next_text<R: AsyncBufRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) -> Option<String> {
+pub(crate) async fn next_text<R: AsyncBufRead + Unpin>(r: &mut R, buf: &mut Vec<u8>) -> Option<String> {
     buf.clear();
     match r.read_until(b'\n', buf).await {
         Ok(0) | Err(_) => None,
@@ -957,14 +957,14 @@ pub fn friendly_error(raw: &str) -> String {
 }
 
 /// A Windows job object that kills every process in it when told to, or when dropped.
-struct KillGroup(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct KillGroup(windows_sys::Win32::Foundation::HANDLE);
 
 // The handle is only used through thread-safe Win32 calls.
 unsafe impl Send for KillGroup {}
 unsafe impl Sync for KillGroup {}
 
 impl KillGroup {
-    fn new() -> Option<Self> {
+    pub(crate) fn new() -> Option<Self> {
         use windows_sys::Win32::System::JobObjects::*;
         unsafe {
             let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -982,12 +982,12 @@ impl KillGroup {
             Some(Self(h))
         }
     }
-    fn add(&self, process: std::os::windows::io::RawHandle) {
+    pub(crate) fn add(&self, process: std::os::windows::io::RawHandle) {
         unsafe {
             windows_sys::Win32::System::JobObjects::AssignProcessToJobObject(self.0, process as _);
         }
     }
-    fn kill(&self) {
+    pub(crate) fn kill(&self) {
         unsafe {
             windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
         }

@@ -29,6 +29,8 @@ export const app = $state({
   menu: null as { id: string; x: number; y: number } | null,
   /** A removal waiting for an answer (`files`: also delete what is on disk). */
   ask: null as { ids: string[]; files: boolean } | null,
+  /** The convert sheet, with the files and folders it starts with. */
+  convert: null as string[] | null,
   toast: null as string | null,
   /** Full-width parts view for the selected download. */
   partsOpen: false,

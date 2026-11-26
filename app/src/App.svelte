@@ -6,6 +6,7 @@
   import Pass from './components/Pass.svelte';
   import SettingsPanel from './components/SettingsPanel.svelte';
   import AddSheet from './components/AddSheet.svelte';
+  import ConvertSheet from './components/ConvertSheet.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import PartsView from './components/PartsView.svelte';
   import TorrentView from './components/TorrentView.svelte';
@@ -29,6 +30,10 @@
       app.adding = p.url;
     };
     api.onOpenAdd(openAdd);
+    api.onOpenConvert((paths) => {
+      app.adding = false;
+      app.convert = paths;
+    });
     init().then(async () => {
       ready = true;
       if (inTauri) {
@@ -42,6 +47,8 @@
         if (id && app.items[id]) select(id);
         if (q.has('parts')) app.partsOpen = true;
         if (q.has('add')) app.adding = q.get('add') || true;
+        // ?convert previews the convert sheet with a sample album.
+        if (q.has('convert')) app.convert = ['C:\\Users\\you\\Music\\Harbour Lights - Night Shift'];
         // ?firefox previews a download Firefox handed over.
         if (q.has('firefox')) {
           openAdd({ url: 'https://downloads.example.org/files/Setup-Studio-2026.exe?token=a81f', headers: [['Cookie', 'session=1']], fileName: 'Setup-Studio-2026.exe', size: 1.42 * 1024 ** 3, from: 'Firefox' });
@@ -65,7 +72,7 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (app.adding || app.ask || app.menu || typing(e.target)) return;
+    if (app.adding || app.convert || app.ask || app.menu || typing(e.target)) return;
     const id = app.selected;
     const item = id ? app.items[id] : null;
     if (e.ctrlKey && e.key.toLowerCase() === 'f') {
@@ -131,6 +138,9 @@
   {#key app.addSeq}
     <AddSheet />
   {/key}
+{/if}
+{#if app.convert}
+  <ConvertSheet />
 {/if}
 <RowMenu />
 <DeleteDialog />

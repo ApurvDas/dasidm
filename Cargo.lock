@@ -1027,6 +1027,7 @@ dependencies = [
  "das-torrent",
  "dirs",
  "fastrand",
+ "futures-util",
  "librqbit",
  "parking_lot 0.13.0",
  "rusqlite",

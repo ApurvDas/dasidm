@@ -17,7 +17,6 @@
   $effect(() => {
     const p = [...paths];
     const pr = preset;
-    const od = outDir.trim() || null;
     if (!p.length) {
       plan = null;
       return;
@@ -25,7 +24,7 @@
     let live = true;
     loading = true;
     api
-      .convertPlan(p, pr, od)
+      .convertPlan(p, pr, null)
       .then((r) => {
         if (live) plan = r;
       })
@@ -85,9 +84,10 @@
   const step = $derived(app.tools?.installing);
 </script>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && !app.ask && close()} />
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="scrim" onpointerdown={close}></div>
-<div class="sheet" role="dialog" aria-modal="true" aria-label="Convert music" tabindex="-1" onkeydown={(e) => e.key === 'Escape' && close()}>
+<div class="sheet" role="dialog" aria-modal="true" aria-label="Convert music" tabindex="-1">
   <div class="top">
     <h3><Icon name="type-music" />Convert music</h3>
     <span class="note">Your own files, on this PC. The originals are never changed.</span>

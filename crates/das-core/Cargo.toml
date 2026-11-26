@@ -25,5 +25,6 @@ zip = { version = "9.8.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 axum = "0.8"
+futures-util = "0.3.34"
 librqbit = { version = "9.1.0", default-features = false, features = ["default-tls"] }
 tempfile = "3.27.0"

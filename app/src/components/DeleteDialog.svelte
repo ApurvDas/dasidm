@@ -19,6 +19,10 @@
   const what = $derived(
     one?.kind === 'torrent' && (one.torrent?.files ?? 1) > 1 ? `the folder and its ${one.torrent?.files} files` : items.length > 1 ? `${items.length} files` : 'the file',
   );
+  /** Conversion batches: only the copies they made can go; the originals always stay. */
+  const isConvert = $derived(items.length > 0 && items.every((i) => i.kind === 'convert'));
+  const copies = $derived(items.reduce((a, i) => a + (i.convert?.done ?? 0), 0));
+  const copiesText = $derived(`the ${copies} converted ${copies === 1 ? 'copy' : 'copies'}`);
   let keep = $state<HTMLButtonElement>();
   $effect(() => {
     if (ask) keep?.focus();
@@ -33,6 +37,10 @@
     close();
     await run(api.remove(ids, files));
     if (app.selected && ids.includes(app.selected)) app.selected = null;
+    if (isConvert) {
+      toast(files ? `Deleted ${copiesText}; your originals stay` : 'Removed from the list; the converted copies stay');
+      return;
+    }
     toast(files ? (allDone ? `Deleted ${what} from your PC` : 'Removed; the partial data is deleted') : 'Removed from the list; the files stay on your PC');
   }
   function onKey(e: KeyboardEvent) {
@@ -49,14 +57,20 @@
   <div class="dlg" role="alertdialog" aria-modal="true" aria-labelledby="del-t" aria-describedby="del-d" tabindex="-1" onkeydown={onKey}>
     <h2 id="del-t">
       <Icon name="trash" size={18} />
-      {#if !allDone}Remove {items.length === 1 ? 'this download' : `${items.length} downloads`}?{:else if ask.files}Delete from your PC?{:else}Remove from the list?{/if}
+      {#if isConvert}{ask.files || !allDone ? 'Delete the converted copies?' : 'Remove from the list?'}{:else if !allDone}Remove {items.length === 1 ? 'this download' : `${items.length} downloads`}?{:else if ask.files}Delete from your PC?{:else}Remove from the list?{/if}
     </h2>
     <div id="del-d" class="body">
       {#if one}
         <b class="name">{one.fileName}</b>
         <span class="path" title={where}>{where}</span>
       {/if}
-      {#if !allDone}
+      {#if isConvert && !allDone}
+        <p>It stops, and {copiesText} made so far {copies === 1 ? 'is' : 'are'} deleted. Your original files stay as they are.</p>
+      {:else if isConvert && ask.files}
+        <p>DasIDM deletes {copiesText} for good; {copies === 1 ? 'it doesn’t' : 'they don’t'} go to the Recycle Bin. Your original files stay as they are.</p>
+      {:else if isConvert}
+        <p>The batch leaves the list; {copiesText} and your originals stay on your PC.</p>
+      {:else if !allDone}
         <p>It stops, and the {bytes(size)} downloaded so far is deleted.</p>
       {:else if ask.files}
         <p>

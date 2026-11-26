@@ -142,6 +142,9 @@ async fn every_preset_gives_what_it_says() {
         assert_eq!(o.codec, p.codec(), "{p:?}: {o:?}");
         assert_eq!(o.title.as_deref(), Some("Tone — Night ｜ 夜"), "{p:?} keeps the tags: {o:?}");
         assert_eq!(o.cover, p.keeps_cover(), "{p:?} cover: {o:?}");
+        if !p.lossless() {
+            assert!(o.rate <= 48_000, "{p:?} must not stay at 96 kHz: {o:?}");
+        }
         match p {
             Preset::Flac16 | Preset::Wav16 => assert_eq!((o.rate, o.bits), (48_000, Some(16)), "{p:?}: {o:?}"),
             Preset::Alac => assert_eq!((o.rate, o.bits), (96_000, Some(24)), "{p:?}: {o:?}"),
@@ -228,4 +231,84 @@ fn preset_labels_are_distinct() {
     labels.dedup();
     assert_eq!(labels.len(), PRESETS.len());
     assert!(PRESETS.iter().any(|p| p.lossless()) && PRESETS.iter().any(|p| !p.lossless()));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn retry_converts_the_files_that_failed() {
+    let Some(ff) = tools() else {
+        eprintln!("ffmpeg not installed; skipping");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let bad = tmp.path().join("broken.flac");
+    std::fs::write(&bad, b"not audio at all").unwrap();
+    let m = open(&tmp.path().join("data"));
+    let id = m
+        .add_convert(AddConvertRequest { paths: vec![bad.to_string_lossy().into_owned()], preset: Preset::Mp3_320, out_dir: None })
+        .await
+        .unwrap()
+        .id;
+    wait_status(&m, &id, Status::Failed, 60).await;
+    assert_eq!(m.get(&id).unwrap().convert.unwrap().failed, 1);
+    // The file is fixed; Retry gives it another go.
+    let good = make_source(&ff, tmp.path(), "good.flac", 3, 500);
+    std::fs::rename(&good, &bad).unwrap();
+    m.resume(&[id.clone()]);
+    wait_status(&m, &id, Status::Done, 60).await;
+    let c = m.get(&id).unwrap().convert.unwrap();
+    assert_eq!((c.done, c.failed), (1, 0));
+    m.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_batch_takes_no_download_slot() {
+    let Some(ff) = tools() else {
+        eprintln!("ffmpeg not installed; skipping");
+        return;
+    };
+    // A slow file server for the download.
+    let app = axum::Router::new().route(
+        "/song.bin",
+        axum::routing::get(|| async {
+            let stream = futures_util::stream::unfold(0u32, |n| async move {
+                if n >= 400 {
+                    return None;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Some((Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![7u8; 16 * 1024])), n + 1))
+            });
+            axum::response::Response::builder()
+                .header("content-length", (400 * 16 * 1024).to_string())
+                .header("content-type", "application/octet-stream")
+                .body(axum::body::Body::from_stream(stream))
+                .unwrap()
+        }),
+    );
+    let tl = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/song.bin", tl.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(tl, app).await.unwrap() });
+
+    let tmp = tempfile::tempdir().unwrap();
+    for (i, f) in [300, 400, 500, 600].into_iter().enumerate() {
+        make_source(&ff, tmp.path(), &format!("{i} long.flac"), 600, f);
+    }
+    let data = tmp.path().join("data");
+    let m = Manager::open(&data, Arc::new(|_| {})).unwrap();
+    m.set_settings(Settings { download_dir: data.join("dl").to_string_lossy().into_owned(), max_concurrent: 1, ..m.settings() }).unwrap();
+    tokio::spawn(m.clone().run());
+    let batch = m
+        .add_convert(AddConvertRequest { paths: vec![tmp.path().to_string_lossy().into_owned()], preset: Preset::Flac16, out_dir: None })
+        .await
+        .unwrap()
+        .id;
+    wait_status(&m, &batch, Status::Downloading, 30).await;
+    // With "At once" set to 1, the download must still start while the batch converts.
+    let dl = m
+        .add(das_core::AddRequest { url, file_name: None, save_dir: None, connections: Some(1), headers: vec![], start: true, allow_page: false })
+        .unwrap()
+        .id;
+    wait_status(&m, &dl, Status::Downloading, 10).await;
+    assert_eq!(m.get(&batch).unwrap().status, Status::Downloading, "both run at once");
+    m.remove(&[dl, batch], true);
+    m.shutdown().await;
 }

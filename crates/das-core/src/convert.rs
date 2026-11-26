@@ -263,6 +263,10 @@ pub fn args(preset: Preset, probe: &AudioProbe, input: &Path, output: &Path) -> 
             "aresample=osr={}:osf=s16:resampler=soxr:precision=28:dither_method=triangular",
             target_rate(probe.sample_rate.max(1))
         ));
+    } else if !preset.lossless() && probe.sample_rate > 48_000 {
+        // Lossy files above 48 kHz only waste bits, and many phones and car stereos won't play them.
+        a.push("-af".into());
+        a.push(format!("aresample=osr={}:resampler=soxr:precision=28", target_rate(probe.sample_rate)));
     }
     if preset.ext() == "mp3" {
         a.extend(["-id3v2_version", "3", "-write_id3v1", "0"].map(String::from));
@@ -281,22 +285,31 @@ pub fn is_audio_file(p: &Path) -> bool {
 /// The files of a batch: files as given, folders searched (skipping folders DasIDM itself
 /// writes conversions to). Each comes with the folder it was found under, so subfolders are kept.
 pub fn expand(inputs: &[PathBuf]) -> Vec<(PathBuf, Option<PathBuf>)> {
+    const MAX_FILES: usize = 5000;
+    const MAX_DEPTH: usize = 12;
     let ours: Vec<&str> = PRESETS.iter().map(|p| p.label()).collect();
     let mut out = Vec::new();
     for i in inputs {
         if i.is_dir() {
-            let mut stack = vec![i.clone()];
-            while let Some(d) = stack.pop() {
+            let mut stack = vec![(i.clone(), 0usize)];
+            while let Some((d, depth)) = stack.pop() {
+                if out.len() >= MAX_FILES {
+                    break;
+                }
                 let Ok(rd) = std::fs::read_dir(&d) else { continue };
-                let mut entries: Vec<PathBuf> = rd.filter_map(|e| e.ok()).map(|e| e.path()).collect();
-                entries.sort();
-                for p in entries {
-                    if p.is_dir() {
+                let mut entries: Vec<(PathBuf, std::fs::FileType)> = rd.filter_map(|e| e.ok()).filter_map(|e| Some((e.path(), e.file_type().ok()?))).collect();
+                entries.sort_by(|a, b| a.0.cmp(&b.0));
+                for (p, ft) in entries {
+                    // Never follow links or junctions (a dropped profile folder must not loop).
+                    if ft.is_symlink() || is_reparse_point(&p) {
+                        continue;
+                    }
+                    if ft.is_dir() {
                         let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if !ours.contains(&name) {
-                            stack.push(p);
+                        if !ours.contains(&name) && depth < MAX_DEPTH {
+                            stack.push((p, depth + 1));
                         }
-                    } else if is_audio_file(&p) {
+                    } else if is_audio_file(&p) && out.len() < MAX_FILES {
                         out.push((p, Some(i.clone())));
                     }
                 }
@@ -306,6 +319,20 @@ pub fn expand(inputs: &[PathBuf]) -> Vec<(PathBuf, Option<PathBuf>)> {
         }
     }
     out
+}
+
+fn is_reparse_point(p: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        std::fs::symlink_metadata(p).is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = p;
+        false
+    }
 }
 
 /// Where one file's result goes: next to the original in a folder named after the preset
@@ -482,8 +509,28 @@ impl ConvertJob {
     }
 }
 
-/// ffprobe one file.
+/// Files already read, by path, size and modified time: the sheet asks again for every format
+/// change, then the batch and each file's conversion ask once more.
+static PROBES: std::sync::LazyLock<Mutex<std::collections::HashMap<(PathBuf, u64, Option<std::time::SystemTime>), AudioProbe>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// ffprobe one file (cached).
 pub async fn probe(ffprobe: &Path, file: &Path) -> Option<AudioProbe> {
+    let meta = std::fs::metadata(file).ok()?;
+    let key = (file.to_path_buf(), meta.len(), meta.modified().ok());
+    if let Some(p) = PROBES.lock().get(&key) {
+        return Some(p.clone());
+    }
+    let p = probe_uncached(ffprobe, file).await?;
+    let mut cache = PROBES.lock();
+    if cache.len() > 20_000 {
+        cache.clear();
+    }
+    cache.insert(key, p.clone());
+    Some(p)
+}
+
+async fn probe_uncached(ffprobe: &Path, file: &Path) -> Option<AudioProbe> {
     let out = hidden(ffprobe)
         .args(["-v", "error", "-print_format", "json", "-show_streams", "-show_format"])
         .arg(file)
@@ -647,6 +694,10 @@ mod tests {
         let o = args(Preset::Opus128, &hires, Path::new("a.flac"), Path::new("a.opus.dasconv")).join(" ");
         assert!(!o.contains("attached_pic") && o.contains("-f opus"), "{o}");
         assert!(args(Preset::Alac, &hires, Path::new("a"), Path::new("b")).join(" ").contains("-f ipod"));
+        let aac = args(Preset::Aac256, &hires, Path::new("a.flac"), Path::new("a.m4a.dasconv")).join(" ");
+        assert!(aac.contains("aresample=osr=48000:resampler=soxr") && !aac.contains("osf=s16"), "{aac}");
+        let cd = probe_of("flac", 44_100, Some(16), None);
+        assert!(!args(Preset::Aac256, &cd, Path::new("a"), Path::new("b")).join(" ").contains("aresample"), "44.1 kHz stays as it is");
     }
 
     #[test]

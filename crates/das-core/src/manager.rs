@@ -443,6 +443,15 @@ impl Manager {
                         }
                         continue;
                     }
+                    // Retry a batch: files that failed get another go (finished ones are kept).
+                    if item.kind == Kind::Convert && matches!(item.status, Status::Paused | Status::Failed) {
+                        if let Some(c) = item.convert.as_mut() {
+                            for f in c.files.iter_mut().filter(|f| f.state == crate::convert::FileState::Failed) {
+                                f.state = crate::convert::FileState::Pending;
+                                f.note = None;
+                            }
+                        }
+                    }
                     if matches!(item.status, Status::Paused | Status::Failed) {
                         item.status = Status::Queued;
                         item.error = None;

@@ -122,13 +122,14 @@
     if (i.status === 'queued') return 'WAITING';
     const p = app.progress[i.id];
     const pc = pctOf(i);
+    // A conversion runs on this PC; the network doesn't matter to it.
+    if (i.kind === 'convert') return `CONVERTING · ${pc ?? 0}%`;
     if (!online) return pc == null ? 'NO NETWORK' : `NO NETWORK · ${pc}%`;
     if (i.kind === 'torrent') {
       if (p?.torrent?.checking) return `CHECKING · ${pc ?? 0}%`;
       if (!p || p.speed === 0) return pc == null ? 'FINDING PEERS' : `FINDING PEERS · ${pc}%`;
       return `${pc ?? '··'}% · ${p.torrent?.peers ?? 0} PEERS`;
     }
-    if (i.kind === 'convert') return `CONVERTING · ${pc ?? 0}%`;
     if (i.kind === 'video') {
       if (p?.phase && isPostPhase(p.phase)) return PHASE_BOARD[p.phase];
       if (!p || p.speed === 0) return pc == null ? 'STARTING' : `STARTING · ${pc}%`;

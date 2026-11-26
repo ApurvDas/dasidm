@@ -419,6 +419,28 @@ export async function invoke<T>(cmd: string, args: Record<string, any> = {}): Pr
       mockTrackers = mockTrackers.map((t) => (t.url === args.old ? { ...t, url: args.new, state: 'notContacted', seeders: null, leechers: null, peers: 0, message: null } : t));
       return undefined as T;
     case 'find_more_peers':
+    case 'music_lookup': {
+      await new Promise((r) => setTimeout(r, 600));
+      const u = String((args as { url: string }).url);
+      if (/amazon\./i.test(u)) {
+        return { service: 'amazonMusic', kind: 'album', title: null, artist: null, album: null, year: null, duration: null, tracks: null, cover: null, manual: true, note: "DasIDM doesn't read Amazon Music pages. Type the artist and title to search the stores." } as T;
+      }
+      const album = /\/album\//.test(u);
+      // A synthetic cover: two flat colour fields, no real album art in the preview.
+      const cover = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#1d3b53"/><circle cx="40" cy="26" r="14" fill="#ffd400"/><rect y="44" width="64" height="20" fill="#0b0d10"/></svg>');
+      return {
+        service: 'spotify', kind: album ? 'album' : 'track', title: album ? 'Night Harbour' : 'Paper Lanterns', artist: 'The Example Band',
+        album: 'Night Harbour', year: 2019, duration: album ? null : 214, tracks: album ? 10 : null, cover, manual: false, note: null,
+      } as T;
+    }
+    case 'music_stores':
+      return [
+        { id: 'bandcamp', name: 'Bandcamp', sells: 'Pick the format when you buy: MP3, FLAC, ALAC, AAC, Ogg, WAV and more' },
+        { id: 'qobuz', name: 'Qobuz', sells: 'FLAC in CD quality, and 24-bit hi-res where the release has it' },
+        { id: 'hdtracks', name: 'HDtracks', sells: 'Hi-res FLAC and ALAC' },
+      ] as T;
+    case 'open_store_search':
+      return undefined as T;
     case 'upload_status':
       return { peakBps: 1_450_000, learnedSeconds: 600, learnSeconds: 60, capBps: 1_160_000 } as T;
     case 'public_trackers': {

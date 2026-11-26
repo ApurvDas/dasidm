@@ -3,6 +3,7 @@
 pub mod categories;
 mod db;
 pub mod links;
+pub mod music;
 mod manager;
 pub mod model;
 pub mod settings;

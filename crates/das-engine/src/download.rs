@@ -57,6 +57,8 @@ pub struct Snapshot {
     pub resumable: bool,
     pub segments: Vec<SegmentView>,
     pub error: Option<EngineError>,
+    /// Lines handed to a fresh connection so far (stalled or crawling at the tail).
+    pub replaced: u64,
     /// The server's Content-Type, once known (used to categorise names without an extension).
     pub content_type: Option<String>,
 }
@@ -135,6 +137,7 @@ struct Shared {
     segments: Mutex<Vec<Arc<Segment>>>,
     file: Mutex<Option<Arc<File>>>,
     fatal: Mutex<Option<EngineError>>,
+    replaced: AtomicU64,
 }
 
 /// Control and observation of one download. Cheap to clone.
@@ -189,6 +192,7 @@ impl DownloadHandle {
             resumable: s.resumable.load(Relaxed),
             segments,
             error: m.error.clone(),
+            replaced: s.replaced.load(Relaxed),
             content_type: m.content_type.clone(),
         }
     }
@@ -318,6 +322,7 @@ pub(crate) fn spawn(
         segments: Mutex::new(Vec::new()),
         file: Mutex::new(None),
         fatal: Mutex::new(None),
+        replaced: AtomicU64::new(0),
     });
     let (tx, rx) = watch::channel(None);
     let s = shared.clone();
@@ -526,8 +531,8 @@ async fn supervise(
 struct LineWatch {
     /// Per segment: (time, bytes received) samples over the last few seconds.
     samples: HashMap<usize, std::collections::VecDeque<(u64, u64)>>,
-    /// The whole download's (time, bytes received) over the last few seconds.
-    totals: std::collections::VecDeque<(u64, u64)>,
+    /// The whole download's (time, bytes received, lines active) over the last few seconds.
+    totals: std::collections::VecDeque<(u64, u64, usize)>,
     /// The best average line speed seen lately (bytes/s: download speed / active lines) and when.
     /// Measured download-wide, so it doesn't depend on how long any one range lives (fast lines
     /// finish ranges and split new ones all the time).
@@ -568,13 +573,17 @@ impl LineWatch {
         if now - self.peak_at > 30_000 {
             self.peak = 0.0;
         }
-        self.totals.push_back((now, total));
+        self.totals.push_back((now, total, speeds.len()));
         while self.totals.len() > 2 && now - self.totals[1].0 >= Self::WINDOW_MS {
             self.totals.pop_front();
         }
-        let (t0, b0) = self.totals[0];
-        if now - t0 >= 1000 && !speeds.is_empty() {
-            let line_avg = (total - b0) as f64 * 1000.0 / (now - t0) as f64 / speeds.len() as f64;
+        let (t0, b0, _) = self.totals[0];
+        // Divide by the lines active on average over the same window: when most lines finish
+        // together, the bytes still count all of them, and dividing by the few left would make
+        // a normal last line look far slower than "the best".
+        let lines = self.totals.iter().map(|x| x.2).sum::<usize>() as f64 / self.totals.len() as f64;
+        if now - t0 >= 1000 && lines >= 1.0 {
+            let line_avg = (total - b0) as f64 * 1000.0 / (now - t0) as f64 / lines;
             if line_avg >= self.peak {
                 self.peak = line_avg;
                 self.peak_at = now;
@@ -610,6 +619,7 @@ impl LineWatch {
                 if let Some(t) = seg.kick.lock().as_ref() {
                     seg.kicked.store(true, SeqCst);
                     t.cancel();
+                    s.replaced.fetch_add(1, SeqCst);
                     self.last_kick = now;
                     return;
                 }

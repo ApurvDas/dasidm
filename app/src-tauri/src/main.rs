@@ -321,6 +321,26 @@ fn open_addon_page() -> Res<()> {
     std::process::Command::new("explorer").arg(ADDON_PAGE).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// The public details of a Spotify / Amazon Music share link, for the music card.
+#[tauri::command]
+async fn music_lookup(app: State<'_, App>, url: String) -> Res<das_core::music::MusicInfo> {
+    app.core.music_lookup(&url).await
+}
+
+/// The stores the music card offers.
+#[tauri::command]
+fn music_stores() -> Vec<das_core::music::Store> {
+    das_core::music::STORES.to_vec()
+}
+
+/// Open a store's search in the browser. The address is built in Rust from the store's fixed
+/// template; the page only names the store and the words to search for.
+#[tauri::command]
+fn open_store_search(app: State<'_, App>, store: String, query: String) -> Res<()> {
+    let url = app.core.store_search_url(&store, &query).ok_or_else(|| "Unknown store or empty search".to_string())?;
+    std::process::Command::new("explorer").arg(url).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
@@ -412,8 +432,9 @@ fn add_urls(app: &AppHandle, args: &[String]) {
         .filter(|a| (a.starts_with("http://") || a.starts_with("https://")) && !das_core::is_torrent_link(a))
         .cloned()
         .collect();
-    // A video page needs a quality choice: open the Add sheet with it instead of saving the page.
-    if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u)) {
+    // A video page needs a quality choice, and a Spotify / Amazon Music link shows where to buy
+    // it: open the Add sheet with it instead of saving the page.
+    if let Some(i) = urls.iter().position(|u| das_core::video::is_video_site(u) || das_core::music::parse_link(u).is_some()) {
         let link = urls.remove(i);
         *app.state::<App>().pending_add.lock() = Some(PendingAdd::link(link.clone()));
         show_main(app);
@@ -490,6 +511,9 @@ fn main() {
             find_more_peers,
             public_trackers,
             upload_status,
+            music_lookup,
+            music_stores,
+            open_store_search,
             add_trackers,
             remove_trackers,
             replace_tracker,

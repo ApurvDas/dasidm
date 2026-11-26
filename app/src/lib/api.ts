@@ -1,4 +1,4 @@
-import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, UploadStatus, VideoInfo } from './types';
+import type { AddRequest, AddTorrentRequest, AddVideoRequest, BrowserStatus, CoreEvent, ItemView, PendingAdd, ProbeInfo, Settings, ToolsStatus, TorrentFile, TorrentPreview, TrackerView, UploadStatus, VideoInfo, MusicInfo, MusicStore } from './types';
 
 /** True inside the DasIDM window; false in a plain browser (design preview). */
 export const inTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -54,6 +54,11 @@ export const api = {
   findMorePeers: (id: string) => invokeImpl<{ added: number; total: number }>('find_more_peers', { id }),
   publicTrackers: () => invokeImpl<string[]>('public_trackers'),
   uploadStatus: () => invokeImpl<UploadStatus>('upload_status'),
+  /** A Spotify / Amazon Music share link's public details (never its audio). */
+  musicLookup: (url: string) => invokeImpl<MusicInfo>('music_lookup', { url }),
+  musicStores: () => invokeImpl<MusicStore[]>('music_stores'),
+  /** Opens a store's search in the browser; Rust builds the address. */
+  openStoreSearch: (store: string, query: string) => invokeImpl<void>('open_store_search', { store, query }),
   torrentFiles: (id: string) => invokeImpl<{ files: TorrentFile[]; chosen: number[] | null }>('torrent_files', { id }),
   setTorrentFiles: (id: string, only: number[]) => invokeImpl<void>('set_torrent_files', { id, only }),
   seed: (ids: string[]) => invokeImpl<void>('seed', { ids }),

@@ -87,6 +87,46 @@ export interface AddTorrentRequest {
 }
 
 /** magnet: links, links to .torrent files, and local .torrent paths. */
+/** A Spotify or Amazon Music share link (mirrors `music::parse_link` in das-core). */
+export const isMusicLink = (s: string) => {
+  const t = s.trim();
+  if (/^spotify:(track|album|playlist|artist):[A-Za-z0-9]+$/.test(t)) return true;
+  try {
+    const u = new URL(t);
+    const h = u.hostname.toLowerCase();
+    if (h === 'open.spotify.com') return /\/(track|album|playlist|artist)\/[A-Za-z0-9]+/.test(u.pathname);
+    if (h === 'spotify.link') return u.pathname.length > 1;
+    if (h.startsWith('music.amazon.')) return /^\/(albums|tracks|playlists|user-playlists|artists)\//.test(u.pathname);
+  } catch {
+    /* not a URL */
+  }
+  return false;
+};
+
+/** The public details of a music share link. */
+export interface MusicInfo {
+  service: 'spotify' | 'amazonMusic' | null;
+  kind: 'track' | 'album' | 'playlist' | 'artist' | null;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  year: number | null;
+  duration: number | null;
+  tracks: number | null;
+  /** data: URI */
+  cover: string | null;
+  /** Nothing could be read: type artist and title. */
+  manual: boolean;
+  note: string | null;
+}
+
+/** A store that sells music as downloads. */
+export interface MusicStore {
+  id: string;
+  name: string;
+  sells: string;
+}
+
 export const isTorrentLink = (s: string) => /^magnet:\?/i.test(s.trim()) || /\.torrent(\?.*)?$/i.test(s.trim());
 export const isLocalPath = (s: string) => /^[a-z]:\\/i.test(s.trim()) || s.trim().startsWith('\\\\');
 

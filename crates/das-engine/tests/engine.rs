@@ -308,12 +308,13 @@ async fn a_trickling_line_is_replaced() {
     let dir = tempfile::tempdir().unwrap();
     let size = 8 * 1024 * 1024;
     let started = Instant::now();
-    // One line gets 16 KiB every 150 ms (about 100 KB/s); the others run at full speed.
-    let h = quick_engine().start(req(format!("{base}/file?size={size}&delay=300&key=trickle&trickle=150000"), dir.path(), 4), None, vec![]);
+    // One line gets 16 KiB every 300 ms (about 50 KB/s); the others run at full speed.
+    let h = quick_engine().start(req(format!("{base}/file?size={size}&delay=300&key=trickle&trickle=300000"), dir.path(), 4), None, vec![]);
     let done = tokio::time::timeout(Duration::from_secs(30), h.wait()).await.expect("too slow").unwrap();
     assert!(std::fs::read(&done.path).unwrap() == expected(size), "content mismatch");
-    // Its last unsplittable 512 KiB alone would take about 5 s at that pace.
-    assert!(started.elapsed() < Duration::from_secs(4), "took {:?}", started.elapsed());
+    // Its last unsplittable 512 KiB alone would take about 10 s at that pace; replaced, the
+    // whole download takes 2-3 s (6 s leaves room for a busy machine).
+    assert!(started.elapsed() < Duration::from_secs(6), "took {:?}", started.elapsed());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

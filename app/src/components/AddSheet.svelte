@@ -6,7 +6,8 @@
   import Icon from '../lib/Icon.svelte';
   import VideoPicker from './VideoPicker.svelte';
   import TorrentPicker from './TorrentPicker.svelte';
-  import { isLocalPath, isTorrentLink, isWebPage, type ProbeInfo, type TorrentPreview, type VideoInfo, type VideoOption } from '../lib/types';
+  import MusicCard from './MusicCard.svelte';
+  import { isLocalPath, isMusicLink, isTorrentLink, isWebPage, type ProbeInfo, type TorrentPreview, type VideoInfo, type VideoOption } from '../lib/types';
 
   let url = $state(typeof app.adding === 'string' ? app.adding : '');
   let name = $state('');
@@ -80,8 +81,10 @@
   const toolsReady = $derived(!!app.tools?.ready);
   /** A torrent: by its link, or because the server says the file is one. */
   const torrentish = $derived(valid && (isTorrentLink(url) || /bittorrent/i.test(info?.content_type ?? '')));
+  /** A Spotify / Amazon Music share link: shows where to buy it; nothing is downloaded. */
+  const music = $derived(isMusicLink(url));
   /** Worth asking yt-dlp: a known video site, or any link that turned out to be a page. */
-  const maybeVideo = $derived(valid && !torrentish && (videoHost(url.trim()) || isPage));
+  const maybeVideo = $derived(valid && !torrentish && !music && (videoHost(url.trim()) || isPage));
 
   $effect(() => {
     const u = url.trim();
@@ -96,7 +99,7 @@
     terror = '';
     tloading = false;
     const mine = ++token;
-    if (!/^https?:\/\/\S+$/i.test(u)) return;
+    if (!/^https?:\/\/\S+$/i.test(u) || isMusicLink(u)) return;
     probing = !videoHost(u) && !isTorrentLink(u);
     const t = setTimeout(async () => {
       if (videoHost(u) || isTorrentLink(u)) return; // read by yt-dlp / the torrent session instead
@@ -191,6 +194,7 @@
   }
 
   async function submit(start: boolean, allowPage = false) {
+    if (music) return;
     if (video) return submitVideo(start);
     if (torrentish) return submitTorrent(start);
     if (!valid || ((isPage || videoHost(url.trim())) && !allowPage)) return;
@@ -313,6 +317,9 @@
     {/if}
   </div>
 
+  {#if music}
+    <MusicCard url={url.trim()} />
+  {/if}
   {#if video}
     <VideoPicker info={video} bind:chosen bind:playlist />
   {/if}
@@ -320,7 +327,7 @@
     <TorrentPicker preview={tpreview} bind:chosen={tchosen} bind:trackers={ttrackers} />
   {/if}
 
-  <div class="grid">
+  {#if !music}<div class="grid">
     {#if !video && !videoHost(url.trim()) && !torrentish}
       <label>
         <span class="cap">Save as</span>
@@ -342,12 +349,14 @@
         <button class="btn" onclick={browse}><Icon name="folder" />Browse…</button>
       </div>
     </div>
-  </div>
+  </div>{/if}
 
   <div class="foot">
-    <button class="btn ghost left" onclick={openTorrentFile} title="Open a .torrent file from this PC"><Icon name="type-torrents" />Open .torrent…</button>
-    <button class="btn ghost" onclick={close}>Cancel<kbd>Esc</kbd></button>
-    {#if torrentish}
+    {#if !music}<button class="btn ghost left" onclick={openTorrentFile} title="Open a .torrent file from this PC"><Icon name="type-torrents" />Open .torrent…</button>{/if}
+    <button class="btn ghost" onclick={close}>{music ? 'Close' : 'Cancel'}<kbd>Esc</kbd></button>
+    {#if music}
+      <!-- nothing to download: the music card's store buttons are the actions -->
+    {:else if torrentish}
       <button class="btn" disabled={!tpreview || tchosen.size === 0} onclick={() => submitTorrent(false)}>Add paused</button>
       <button class="btn primary" disabled={!tpreview || tchosen.size === 0} onclick={() => submitTorrent(true)}><Icon name="down" />Download<kbd>Enter</kbd></button>
     {:else if video}

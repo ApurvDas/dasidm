@@ -526,7 +526,11 @@ async fn supervise(
 struct LineWatch {
     /// Per segment: (time, bytes received) samples over the last few seconds.
     samples: HashMap<usize, std::collections::VecDeque<(u64, u64)>>,
-    /// The best single-line speed seen lately (bytes/s) and when.
+    /// The whole download's (time, bytes received) over the last few seconds.
+    totals: std::collections::VecDeque<(u64, u64)>,
+    /// The best average line speed seen lately (bytes/s: download speed / active lines) and when.
+    /// Measured download-wide, so it doesn't depend on how long any one range lives (fast lines
+    /// finish ranges and split new ones all the time).
     peak: f64,
     peak_at: u64,
     last_kick: u64,
@@ -536,7 +540,10 @@ impl LineWatch {
     const WINDOW_MS: u64 = 3000;
 
     fn check(&mut self, s: &Shared, now: u64) {
-        let segs: Vec<Arc<Segment>> = s.segments.lock().iter().filter(|x| x.active.load(SeqCst)).cloned().collect();
+        let (segs, total): (Vec<Arc<Segment>>, u64) = {
+            let all = s.segments.lock();
+            (all.iter().filter(|x| x.active.load(SeqCst)).cloned().collect(), all.iter().map(|x| x.recv.load(SeqCst)).sum())
+        };
         let mut speeds: Vec<(Arc<Segment>, Option<f64>)> = Vec::new();
         let mut keep = std::collections::HashSet::new();
         for seg in segs {
@@ -561,12 +568,16 @@ impl LineWatch {
         if now - self.peak_at > 30_000 {
             self.peak = 0.0;
         }
-        for (_, sp) in &speeds {
-            if let Some(v) = sp {
-                if *v >= self.peak {
-                    self.peak = *v;
-                    self.peak_at = now;
-                }
+        self.totals.push_back((now, total));
+        while self.totals.len() > 2 && now - self.totals[1].0 >= Self::WINDOW_MS {
+            self.totals.pop_front();
+        }
+        let (t0, b0) = self.totals[0];
+        if now - t0 >= 1000 && !speeds.is_empty() {
+            let line_avg = (total - b0) as f64 * 1000.0 / (now - t0) as f64 / speeds.len() as f64;
+            if line_avg >= self.peak {
+                self.peak = line_avg;
+                self.peak_at = now;
             }
         }
         // One replacement at a time, at most every half second.

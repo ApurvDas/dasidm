@@ -203,6 +203,17 @@ impl Manager {
         self.inner.upload_status()
     }
 
+    /// The public details of a Spotify / Amazon Music share link (see `music`).
+    pub async fn music_lookup(&self, url: &str) -> Result<crate::music::MusicInfo, String> {
+        let link = crate::music::parse_link(url).ok_or_else(|| "Not a Spotify or Amazon Music link".to_string())?;
+        Ok(crate::music::lookup(&self.inner.engine, &link).await)
+    }
+
+    /// A store's search address for this query (stores and their addresses are fixed in `music`).
+    pub fn store_search_url(&self, store_id: &str, query: &str) -> Option<String> {
+        crate::music::store_url(store_id, query, crate::music::qobuz_region(&crate::music::system_locale()))
+    }
+
     pub async fn probe(&self, url: String, headers: Vec<(String, String)>) -> Result<ProbeInfo, String> {
         let req = DownloadRequest { url, headers, save_dir: PathBuf::new(), file_name: None, connections: 1, allow_html: true };
         self.inner.engine.probe(&req).await.map_err(|e| e.to_string())
